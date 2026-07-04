@@ -460,68 +460,13 @@ button{cursor:pointer}
 <div class="modal-bg" id="modalBg" onclick="if(event.target===this)closeModal()"><div class="modal" id="modal"></div></div>
 <div class="toast" id="toast"></div>
 
-
-<!-- Fix móvil: interceptor de funciones para onclick inline antes de que el módulo cargue -->
+<!-- Firebase SDK v8 compat — compatible con todos los navegadores incluyendo Safari iOS -->
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
 <script>
-(function(){
-  var _queue = [];
-  var _ready = false;
-  var _fns = ['navTo','openModal','closeModal','openProject','closeProjectDetail',
-    'setProjectTab','setProjectFilter','setTaskFilter','setCaseFilter',
-    'toggleTask','deleteTask','deleteProject','deleteMeeting','deleteNote',
-    'closeCase','deleteCase','generateReport','copyReport','resetData',
-    'addUserToDB','removeUserFromDB','renderAll'];
-  
-  function makeProxy(name){
-    return function(){
-      var args = Array.prototype.slice.call(arguments);
-      if(_ready && typeof window['_real_'+name] === 'function'){
-        return window['_real_'+name].apply(this, args);
-      } else {
-        _queue.push({name: name, args: args});
-      }
-    };
-  }
-  
-  _fns.forEach(function(name){
-    window[name] = makeProxy(name);
-  });
-  
-  window._moduleReady = function(){
-    _ready = true;
-    // Reasignar las funciones reales
-    _fns.forEach(function(name){
-      if(typeof window['_real_'+name] === 'function'){
-        window[name] = window['_real_'+name];
-      }
-    });
-    // Ejecutar cola
-    _queue.forEach(function(item){
-      if(typeof window[item.name] === 'function'){
-        window[item.name].apply(null, item.args);
-      }
-    });
-    _queue = [];
-  };
-})();
-</script>
-<!-- Firebase v10 modular SDK — mismo patrón que Nido de Amelia y Centro de Equipo -->
-<script type="importmap">
-{
-  "imports": {
-    "firebase/app":      "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js",
-    "firebase/auth":     "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js",
-    "firebase/database": "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js"
-  }
-}
-</script>
-<script type="module">
-import { initializeApp } from 'firebase/app';
-import { getAuth, signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider, signOut, onAuthStateChanged, browserLocalPersistence, setPersistence } from 'firebase/auth';
-import { getDatabase, ref, get, set, remove, onValue } from 'firebase/database';
-
 /* ── CONFIG ── */
-const firebaseConfig = {
+var firebaseConfig = {
   apiKey:            "AIzaSyDBlLHG_SDpGBboHlm3JjVd09Qx-qzAZkI",
   authDomain:        "ee12026-f5e3d.firebaseapp.com",
   databaseURL:       "https://ee12026-f5e3d-default-rtdb.firebaseio.com",
@@ -530,127 +475,100 @@ const firebaseConfig = {
   messagingSenderId: "756349145887",
   appId:             "1:756349145887:web:6498233c2e0aac81a6962a"
 };
+firebase.initializeApp(firebaseConfig);
+var auth     = firebase.auth();
+var db       = firebase.database();
+var provider = new firebase.auth.GoogleAuthProvider();
 
-/* Admin que siempre tiene acceso (puede agregar/quitar otros) */
-const ADMIN_EMAIL = 'fabianpulgaru@gmail.com';
-/* Ruta en Realtime Database para la lista de usuarios autorizados */
-const USERS_REF   = 'mesa_trabajo_users';
+var ADMIN_EMAIL = 'fabianpulgaru@gmail.com';
+var USERS_REF   = 'mesa_trabajo_users';
+var currentUser = null;
 
-const app      = initializeApp(firebaseConfig);
-const auth     = getAuth(app);
-const db       = getDatabase(app);
-const provider = new GoogleAuthProvider();
-
-/* ─────────────────────────────
-   AUTH — estado reactivo
-───────────────────────────── */
-let currentUser = null;
-
-onAuthStateChanged(auth, async user => {
-  if (!user) { showLogin(); return; }
-  showSpinner(true);
-  const allowed = await checkAllowed(user.email);
-  showSpinner(false);
-  if (!allowed) {
-    await signOut(auth);
-    showLoginErr(`La cuenta ${user.email} no tiene acceso. Contacta al administrador.`);
-    showLogin();
-    return;
-  }
-  currentUser = user;
-  afterLogin(user);
-});
-
-document.getElementById('btnGoogleLogin').onclick = async () => {
-  hideLoginErr();
-  showSpinner(true);
-  try {
-    await setPersistence(auth, browserLocalPersistence);
-    // Safari/iOS no soporta popup — usar redirect siempre en móvil
-    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-    if (isMobile) {
-      await signInWithRedirect(auth, provider);
-      // La página se recarga — el resultado llega en getRedirectResult abajo
-    } else {
-      await signInWithPopup(auth, provider);
-    }
-  } catch(err) {
-    showSpinner(false);
-    showLoginErr('No se pudo iniciar sesión: ' + (err.message || err.code));
-  }
-};
-
-// Capturar resultado del redirect al volver (móvil)
-getRedirectResult(auth).then(result => {
-  if (result && result.user) {
-    // onAuthStateChanged lo procesa automáticamente
-    console.log('Login por redirect OK:', result.user.email);
-  }
-}).catch(err => {
-  if (err.code !== 'auth/no-auth-event' && err.code !== 'auth/null-user') {
-    showLoginErr('Error al recuperar sesión: ' + (err.message || err.code));
-    showSpinner(false);
-  }
-});
-
-document.getElementById('btnLogout').onclick  = doLogout;
-document.getElementById('btnLogout2').onclick = doLogout;
-
-async function doLogout() {
-  await signOut(auth);
-  currentUser = null;
-  showLogin();
-}
-
-async function checkAllowed(email) {
-  /* El admin siempre entra */
-  if (email === ADMIN_EMAIL) {
-    /* Si es la primera vez, se auto-registra */
-    const snap = await get(ref(db, `${USERS_REF}/${emailKey(email)}`));
-    if (!snap.exists()) {
-      await set(ref(db, `${USERS_REF}/${emailKey(email)}`), {
-        email, name: 'Fabián Pulgar', role: 'Admin', addedAt: Date.now()
-      });
-    }
-    return true;
-  }
-  const snap = await get(ref(db, `${USERS_REF}/${emailKey(email)}`));
-  return snap.exists();
-}
-
+/* ── AUTH ── */
 function emailKey(email) {
   return email.replace(/[.#$\[\]]/g, '_');
 }
 
-/* ─────────────────────────────
-   DESPUÉS DEL LOGIN
-───────────────────────────── */
+function isMobileDevice() {
+  return /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+}
+
+document.getElementById('btnGoogleLogin').onclick = function() {
+  hideLoginErr();
+  showSpinner(true);
+  auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).then(function() {
+    if (isMobileDevice()) {
+      return auth.signInWithRedirect(provider);
+    } else {
+      return auth.signInWithPopup(provider);
+    }
+  }).catch(function(err) {
+    showSpinner(false);
+    showLoginErr('No se pudo iniciar sesión: ' + (err.message || err.code || 'Error desconocido'));
+  });
+};
+
+/* Capturar resultado del redirect al volver (móvil) */
+auth.getRedirectResult().then(function(result) {
+  if (result && result.user) {
+    console.log('Login por redirect OK:', result.user.email);
+  }
+}).catch(function(err) {
+  if (err.code !== 'auth/no-auth-event' && err.code !== 'auth/null-user') {
+    console.warn('getRedirectResult error:', err.code);
+  }
+});
+
+auth.onAuthStateChanged(function(user) {
+  if (!user) { showLogin(); return; }
+  showSpinner(true);
+  db.ref(USERS_REF + '/' + emailKey(user.email)).once('value').then(function(snap) {
+    showSpinner(false);
+    if (user.email === ADMIN_EMAIL && !snap.exists()) {
+      db.ref(USERS_REF + '/' + emailKey(user.email)).set({
+        email: user.email, name: 'Fabián Pulgar', role: 'Admin', addedAt: Date.now()
+      });
+    }
+    var allowed = (user.email === ADMIN_EMAIL) || snap.exists();
+    if (!allowed) {
+      auth.signOut();
+      showLoginErr('La cuenta ' + user.email + ' no tiene acceso. Contacta al administrador.');
+      showLogin();
+      return;
+    }
+    currentUser = user;
+    afterLogin(user);
+  }).catch(function(err) {
+    showSpinner(false);
+    showLoginErr('Error al verificar acceso: ' + err.message);
+  });
+});
+
+document.getElementById('btnLogout').onclick  = function() { auth.signOut(); currentUser = null; showLogin(); };
+document.getElementById('btnLogout2').onclick = function() { auth.signOut(); currentUser = null; showLogin(); };
+
 function afterLogin(user) {
   document.getElementById('loginOverlay').classList.add('hidden');
   document.getElementById('appShell').style.display = '';
 
-  /* Topbar chip */
-  const av = document.getElementById('topAvatar');
+  var av = document.getElementById('topAvatar');
   if (user.photoURL) {
-    av.innerHTML = `<img src="${user.photoURL}" alt="">`;
+    av.innerHTML = '<img src="' + user.photoURL + '" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%">';
   } else {
-    av.textContent = (user.displayName || user.email)[0].toUpperCase();
+    av.textContent = (user.displayName || user.email).charAt(0).toUpperCase();
   }
-  document.getElementById('topName').textContent =
-    (user.displayName || user.email).split(' ')[0] + (user.email === ADMIN_EMAIL ? ' · Admin' : '');
+  var firstName = user.displayName ? user.displayName.split(' ')[0] : user.email.split('@')[0];
+  document.getElementById('topName').textContent = firstName + (user.email === ADMIN_EMAIL ? ' · Admin' : '');
 
-  /* Info en ajustes */
   document.getElementById('myAccountInfo').innerHTML =
-    `<b>Nombre:</b> ${esc(user.displayName || '—')}<br>
-     <b>Correo:</b> ${esc(user.email)}<br>
-     <b>Rol:</b> ${user.email === ADMIN_EMAIL ? 'Administrador' : 'Editor'}`;
+    '<b>Nombre:</b> ' + esc(user.displayName || '—') + '<br>' +
+    '<b>Correo:</b> ' + esc(user.email) + '<br>' +
+    '<b>Rol:</b> ' + (user.email === ADMIN_EMAIL ? 'Administrador' : 'Editor');
 
-  /* Mostrar botón de invitar solo al admin */
-  document.getElementById('btnAddUser').style.display =
-    user.email === ADMIN_EMAIL ? '' : 'none';
+  document.getElementById('btnAddUser').style.display = (user.email === ADMIN_EMAIL) ? '' : 'none';
 
-  /* Escuchar cambios en lista de usuarios (para la sección Acceso) */
-  onValue(ref(db, USERS_REF), snap => {
+  /* Escuchar lista de usuarios en tiempo real */
+  db.ref(USERS_REF).on('value', function(snap) {
     window._fbUsers = snap.val() || {};
     renderAccess();
   });
@@ -667,64 +585,44 @@ function showLogin() {
 function showSpinner(on) {
   document.getElementById('loginSpinner').classList.toggle('on', on);
   document.getElementById('btnGoogleLogin').style.display = on ? 'none' : '';
-  const msg = document.getElementById('loginSpinnerMsg');
-  if (msg) {
-    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-    msg.style.display = (on && isMobile) ? 'block' : 'none';
-  }
+  var msg = document.getElementById('loginSpinnerMsg');
+  if (msg) { msg.style.display = (on && isMobileDevice()) ? 'block' : 'none'; }
 }
-function showLoginErr(msg) {
-  const el = document.getElementById('loginErr');
-  el.textContent = msg; el.classList.add('on');
-}
-function hideLoginErr() {
-  document.getElementById('loginErr').classList.remove('on');
-}
+function showLoginErr(msg) { var el=document.getElementById('loginErr'); el.textContent=msg; el.classList.add('on'); }
+function hideLoginErr() { document.getElementById('loginErr').classList.remove('on'); }
 
-/* ─────────────────────────────
-   GESTIÓN DE USUARIOS AUTORIZADO
-───────────────────────────── */
-window.addUserToDB = async function() {
-  if (!currentUser || currentUser.email !== ADMIN_EMAIL) {
-    toast('Solo el administrador puede agregar usuarios'); return;
-  }
-  const email = (document.getElementById('mEmail')?.value || '').trim().toLowerCase();
-  const name  = (document.getElementById('mName')?.value  || '').trim();
-  const role  = (document.getElementById('mRole')?.value  || 'Editor');
-  if (!email) { toast('Ingresa un correo'); return; }
-  if (!email.includes('@')) { toast('Correo inválido'); return; }
-  await set(ref(db, `${USERS_REF}/${emailKey(email)}`), {
-    email, name: name || email, role, addedAt: Date.now(), addedBy: currentUser.email
-  });
-  closeModal(); toast('Usuario agregado. Puede entrar de inmediato con su cuenta Google.');
+/* ── USUARIOS ── */
+window.addUserToDB = function() {
+  if (!currentUser || currentUser.email !== ADMIN_EMAIL) { toast('Solo el admin puede agregar usuarios'); return; }
+  var email = (document.getElementById('mEmail') ? document.getElementById('mEmail').value : '').trim().toLowerCase();
+  var name  = (document.getElementById('mName')  ? document.getElementById('mName').value  : '').trim();
+  var role  = (document.getElementById('mRole')  ? document.getElementById('mRole').value  : 'Editor');
+  if (!email || email.indexOf('@') === -1) { toast('Correo inválido'); return; }
+  db.ref(USERS_REF + '/' + emailKey(email)).set({
+    email: email, name: name || email, role: role, addedAt: Date.now(), addedBy: currentUser.email
+  }).then(function() { closeModal(); toast('Usuario agregado. Puede entrar de inmediato.'); });
 };
 
-window.removeUserFromDB = async function(email) {
-  if (!currentUser || currentUser.email !== ADMIN_EMAIL) {
-    toast('Solo el administrador puede eliminar usuarios'); return;
-  }
+window.removeUserFromDB = function(email) {
+  if (!currentUser || currentUser.email !== ADMIN_EMAIL) { toast('Solo el admin puede eliminar usuarios'); return; }
   if (email === ADMIN_EMAIL) { toast('No puedes eliminarte a ti mismo'); return; }
-  if (!confirm(`¿Revocar acceso a ${email}?`)) return;
-  await remove(ref(db, `${USERS_REF}/${emailKey(email)}`));
-  toast('Acceso revocado');
+  if (!confirm('¿Revocar acceso a ' + email + '?')) return;
+  db.ref(USERS_REF + '/' + emailKey(email)).remove().then(function() { toast('Acceso revocado'); });
 };
 
-/* ─────────────────────────────
-   APP STATE  (localStorage)
-───────────────────────────── */
-const today = new Date();
-let state, taskFilter='todas', projectFilter='todos', caseFilter='todos',
-    currentProjectId=null, currentProjectTab='resumen', modalContext={type:null,ctx:''};
+/* ── APP STATE (localStorage) ── */
+var today = new Date();
+var state, taskFilter='todas', projectFilter='todos', caseFilter='todos';
+var currentProjectId=null, currentProjectTab='resumen', modalContext={type:null,ctx:''};
 
 function initApp() {
-  state = JSON.parse(localStorage.getItem('mesaTrabajoV1') || 'null') || buildInitialState();
+  var saved = localStorage.getItem('mesaTrabajoV1');
+  state = saved ? JSON.parse(saved) : buildInitialState();
   ensureShape();
 }
 
 function buildInitialState() {
-  function uid(){ return Math.random().toString(36).slice(2)+Date.now().toString(36) }
-  function isoAdd(n){ const d=new Date(); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10) }
-  const p = [
+  var p = [
     {id:uid(),name:'Chatbot UAH',desc:'Diseño lingüístico, alertas y rutas de apoyo estudiantil.',status:'activo',priority:'alta',owner:'Fabián',progress:65},
     {id:uid(),name:'Docencia inclusiva',desc:'Orientaciones, herramientas y taxonomía de barreras.',status:'activo',priority:'alta',owner:'Fabián',progress:48},
     {id:uid(),name:'Monitoreo Trayectoria',desc:'Panel de participación, riesgo y seguimiento UTE.',status:'activo',priority:'media',owner:'Fabián',progress:72},
@@ -748,302 +646,297 @@ function buildInitialState() {
       {id:uid(),name:'Docente requiere orientación inclusiva',type:'Docente',program:'Docencia inclusiva',project:p[1].id,status:'en seguimiento',alert:'media',owner:'Fabián',next:'Enviar propuesta de ajustes razonables y recursos DUA.',due:isoAdd(3),desc:'Solicitud asociada a barreras de participación en aula.',history:'Conversación inicial realizada; falta formalizar apoyos.'}
     ],
     notes:[
-      {id:uid(),kind:'decisión',text:'La plataforma debe separar seguimiento operativo, reportes y trabajo reflexivo. No solo checklist.',project:p[2].id,date:new Date().toISOString()},
-      {id:uid(),kind:'idea',text:'Crear una vista de "temas para jefatura" que se alimente de tareas bloqueadas y acuerdos recientes.',project:p[2].id,date:new Date().toISOString()}
+      {id:uid(),kind:'decisión',text:'La plataforma debe separar seguimiento operativo, reportes y trabajo reflexivo.',project:p[2].id,date:new Date().toISOString()},
+      {id:uid(),kind:'idea',text:'Crear una vista de temas para jefatura que se alimente de tareas bloqueadas y acuerdos recientes.',project:p[2].id,date:new Date().toISOString()}
     ]
   };
 }
 
-function ensureShape(){
-  ['projects','tasks','meetings','cases','notes'].forEach(k=>{
-    if(!Array.isArray(state[k])) state[k]=[];
+function ensureShape() {
+  ['projects','tasks','meetings','cases','notes'].forEach(function(k) {
+    if (!Array.isArray(state[k])) state[k] = [];
   });
 }
 
-function save(){ localStorage.setItem('mesaTrabajoV1', JSON.stringify(state)); }
-function uid(){ return Math.random().toString(36).slice(2)+Date.now().toString(36); }
-function isoAdd(n){ const d=new Date(); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); }
-function fmt(d){ if(!d) return 'Sin fecha'; return new Date(d+'T12:00:00').toLocaleDateString('es-CL',{day:'2-digit',month:'short'}); }
-function projName(id){ return state.projects.find(p=>p.id===id)?.name||'Sin proyecto'; }
-function tagClass(v){ return v==='alta'?'tag-clay':v==='media'?'tag-gold':'tag-olive'; }
-function esc(s){ return String(s||'').replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m])); }
-function getWeekNumber(d){ const date=new Date(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate())); const day=date.getUTCDay()||7; date.setUTCDate(date.getUTCDate()+4-day); const ys=new Date(Date.UTC(date.getUTCFullYear(),0,1)); return Math.ceil((((date-ys)/86400000)+1)/7); }
-window.esc = esc;
+function save() { localStorage.setItem('mesaTrabajoV1', JSON.stringify(state)); }
+function uid() { return Math.random().toString(36).slice(2) + Date.now().toString(36); }
+function isoAdd(n) { var d=new Date(); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); }
+function fmt(d) { if(!d) return 'Sin fecha'; return new Date(d+'T12:00:00').toLocaleDateString('es-CL',{day:'2-digit',month:'short'}); }
+function projName(id) { var p=state.projects.filter(function(p){return p.id===id;})[0]; return p ? p.name : 'Sin proyecto'; }
+function tagClass(v) { return v==='alta'?'tag-clay':v==='media'?'tag-gold':'tag-olive'; }
+function esc(s) { return String(s||'').replace(/[&<>"]/g,function(m){return({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[m];}); }
+function getWeekNumber(d) { var date=new Date(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate())); var day=date.getUTCDay()||7; date.setUTCDate(date.getUTCDate()+4-day); var ys=new Date(Date.UTC(date.getUTCFullYear(),0,1)); return Math.ceil((((date-ys)/86400000)+1)/7); }
 
 /* ── RENDER ── */
-window.renderAll = function
-window._real_renderAll = window.renderAll;() {
+window.renderAll = function() {
   if (!state) return;
   renderHeader(); renderInicio(); renderProjects(); renderProjectDetail();
   renderTasks(); renderWeek(); renderCases(); renderMeetings(); renderNotes(); renderAccess();
 };
 
-function renderHeader(){
+function renderHeader() {
   document.getElementById('todayDay').textContent = today.toLocaleDateString('es-CL',{day:'2-digit'});
   document.getElementById('todayLabel').textContent = today.toLocaleDateString('es-CL',{weekday:'long',month:'long'});
-  const pend = state.tasks.filter(t=>t.status!=='terminada');
-  const done = state.tasks.filter(t=>t.status==='terminada').length;
-  const pct  = state.tasks.length ? Math.round(done/state.tasks.length*100) : 0;
+  var pend = state.tasks.filter(function(t){return t.status!=='terminada';});
+  var done = state.tasks.filter(function(t){return t.status==='terminada';}).length;
+  var pct  = state.tasks.length ? Math.round(done/state.tasks.length*100) : 0;
   document.getElementById('pulseDone').textContent = pct+'%';
   document.getElementById('pulseBar').style.width  = pct+'%';
   document.getElementById('pulseDate').textContent = 'Semana '+getWeekNumber(today);
-  const badge = document.getElementById('taskBadge');
+  var badge = document.getElementById('taskBadge');
   badge.textContent = pend.length;
   badge.style.display = pend.length ? 'inline' : 'none';
 }
 
-function searchFilter(arr,fields){
-  const q = (document.getElementById('globalSearch')?.value||'').toLowerCase().trim();
-  if(!q) return arr;
-  return arr.filter(o=>fields.some(f=>String(o[f]||'').toLowerCase().includes(q)));
+function searchFilter(arr, fields) {
+  var el = document.getElementById('globalSearch');
+  var q  = el ? (el.value || '').toLowerCase().trim() : '';
+  if (!q) return arr;
+  return arr.filter(function(o) {
+    return fields.some(function(f) { return String(o[f]||'').toLowerCase().indexOf(q) > -1; });
+  });
 }
 
-function renderInicio(){
-  const pend = state.tasks.filter(t=>t.status!=='terminada');
+function renderInicio() {
+  var pend = state.tasks.filter(function(t){return t.status!=='terminada';});
   document.getElementById('sPend').textContent  = pend.length;
-  document.getElementById('sUrg').textContent   = pend.filter(t=>t.priority==='alta').length;
-  document.getElementById('sProj').textContent  = state.projects.filter(p=>p.status==='activo').length;
-  document.getElementById('sCases').textContent = state.cases.filter(c=>c.status!=='cerrado').length;
-  document.getElementById('sMeet').textContent  = state.meetings.filter(m=>m.date>=isoAdd(0)).length;
-  mini('inicioUrgentes', pend.filter(t=>t.priority==='alta').sort((a,b)=>(a.due||'').localeCompare(b.due||'')).slice(0,5).map(t=>({dot:t.priority,title:t.title,meta:`${projName(t.project)} · ${fmt(t.due)} · ${t.owner}`})), 'No hay urgencias abiertas.');
-  mini('inicioReuniones', state.meetings.filter(m=>m.date>=isoAdd(0)).sort((a,b)=>a.date.localeCompare(b.date)).slice(0,4).map(m=>({dot:'media',title:m.title,meta:`${fmt(m.date)} · ${m.people}`})), 'No hay reuniones próximas.');
-  mini('inicioProyectos', state.projects.filter(p=>p.status==='activo').slice(0,4).map(p=>({dot:p.priority,title:p.name,meta:`${p.progress}% · ${p.owner}`})), 'No hay proyectos activos.');
-  mini('inicioNotas', state.notes.slice().sort((a,b)=>b.date.localeCompare(a.date)).slice(0,4).map(n=>({dot:'baja',title:n.kind.toUpperCase(),meta:n.text.slice(0,100)})), 'No hay notas todavía.');
+  document.getElementById('sUrg').textContent   = pend.filter(function(t){return t.priority==='alta';}).length;
+  document.getElementById('sProj').textContent  = state.projects.filter(function(p){return p.status==='activo';}).length;
+  document.getElementById('sCases').textContent = state.cases.filter(function(c){return c.status!=='cerrado';}).length;
+  document.getElementById('sMeet').textContent  = state.meetings.filter(function(m){return m.date>=isoAdd(0);}).length;
+  var urgentes = pend.filter(function(t){return t.priority==='alta';}).sort(function(a,b){return (a.due||'').localeCompare(b.due||'');}).slice(0,5);
+  mini('inicioUrgentes', urgentes.map(function(t){return {dot:t.priority,title:t.title,meta:projName(t.project)+' · '+fmt(t.due)+' · '+t.owner};}), 'No hay urgencias abiertas.');
+  var prox = state.meetings.filter(function(m){return m.date>=isoAdd(0);}).sort(function(a,b){return a.date.localeCompare(b.date);}).slice(0,4);
+  mini('inicioReuniones', prox.map(function(m){return {dot:'media',title:m.title,meta:fmt(m.date)+' · '+m.people};}), 'No hay reuniones próximas.');
+  var activos = state.projects.filter(function(p){return p.status==='activo';}).slice(0,4);
+  mini('inicioProyectos', activos.map(function(p){return {dot:p.priority,title:p.name,meta:p.progress+'% · '+p.owner};}), 'No hay proyectos activos.');
+  var notas = state.notes.slice().sort(function(a,b){return b.date.localeCompare(a.date);}).slice(0,4);
+  mini('inicioNotas', notas.map(function(n){return {dot:'baja',title:n.kind.toUpperCase(),meta:n.text.slice(0,100)};}), 'No hay notas todavía.');
 }
-function mini(id,items,empty){
+
+function mini(id, items, empty) {
   document.getElementById(id).innerHTML = items.length
-    ? items.map(i=>`<div class="mini-item"><span class="dot ${i.dot}"></span><div><div class="mini-title">${esc(i.title)}</div><div class="mini-meta">${esc(i.meta)}</div></div></div>`).join('')
-    : `<div class="empty"><div class="ico">✦</div><p>${empty}</p></div>`;
+    ? items.map(function(i){return '<div class="mini-item"><span class="dot '+i.dot+'"></span><div><div class="mini-title">'+esc(i.title)+'</div><div class="mini-meta">'+esc(i.meta)+'</div></div></div>';}).join('')
+    : '<div class="empty"><div class="ico">✦</div><p>'+empty+'</p></div>';
 }
 
-function renderProjects(){
-  let arr = searchFilter(state.projects,['name','desc','owner','status']);
-  if(projectFilter!=='todos') arr = arr.filter(p=>p.status===projectFilter);
-  document.getElementById('projectGrid').innerHTML = arr.length ? arr.map(p=>{
-    const tareas   = state.tasks.filter(t=>t.project===p.id);
-    const abiertas = tareas.filter(t=>t.status!=='terminada').length;
-    const casos    = state.cases.filter(c=>c.project===p.id&&c.status!=='cerrado').length;
-    const reuniones= state.meetings.filter(m=>m.project===p.id&&m.date>=isoAdd(0)).length;
-    return `<div class="project-card" onclick="openProject('${p.id}')">
-      <div class="project-top"><div class="project-name">${esc(p.name)}</div><span class="tag ${tagClass(p.priority)}">${p.priority}</span></div>
-      <p class="project-desc">${esc(p.desc)}</p>
-      <div class="progress-line"><div style="width:${p.progress}%"></div></div>
-      <div class="project-foot"><span>${p.status} · ${esc(p.owner)}</span><span>${p.progress}%</span></div>
-      <div class="project-foot" style="margin-top:8px"><span>${abiertas} tareas · ${casos} casos · ${reuniones} reuniones</span></div>
-      <div style="display:flex;gap:6px;margin-top:12px" onclick="event.stopPropagation()">
-        <button class="btn btn-outline btn-sm" onclick="openModal('task','${p.id}')">+ Tarea</button>
-        <button class="btn btn-outline btn-sm" onclick="openProject('${p.id}')">Abrir →</button>
-        <button class="btn btn-ghost btn-sm" onclick="deleteProject('${p.id}')">✕</button>
-      </div>
-    </div>`;
-  }).join('') : `<div class="empty"><div class="ico">📁</div><p>No hay proyectos con este filtro.</p></div>`;
+function renderProjects() {
+  var arr = searchFilter(state.projects,['name','desc','owner','status']);
+  if (projectFilter !== 'todos') arr = arr.filter(function(p){return p.status===projectFilter;});
+  document.getElementById('projectGrid').innerHTML = arr.length ? arr.map(function(p) {
+    var tareas    = state.tasks.filter(function(t){return t.project===p.id;});
+    var abiertas  = tareas.filter(function(t){return t.status!=='terminada';}).length;
+    var casos     = state.cases.filter(function(c){return c.project===p.id && c.status!=='cerrado';}).length;
+    var reuniones = state.meetings.filter(function(m){return m.project===p.id && m.date>=isoAdd(0);}).length;
+    return '<div class="project-card" onclick="openProject(\''+p.id+'\')">'+
+      '<div class="project-top"><div class="project-name">'+esc(p.name)+'</div><span class="tag '+tagClass(p.priority)+'">'+p.priority+'</span></div>'+
+      '<p class="project-desc">'+esc(p.desc)+'</p>'+
+      '<div class="progress-line"><div style="width:'+p.progress+'%"></div></div>'+
+      '<div class="project-foot"><span>'+p.status+' · '+esc(p.owner)+'</span><span>'+p.progress+'%</span></div>'+
+      '<div class="project-foot" style="margin-top:8px"><span>'+abiertas+' tareas · '+casos+' casos · '+reuniones+' reuniones</span></div>'+
+      '<div style="display:flex;gap:6px;margin-top:12px" onclick="event.stopPropagation()">'+
+        '<button class="btn btn-outline btn-sm" onclick="openModal(\'task\',\''+p.id+'\')">+ Tarea</button>'+
+        '<button class="btn btn-outline btn-sm" onclick="openProject(\''+p.id+'\')">Abrir →</button>'+
+        '<button class="btn btn-ghost btn-sm" onclick="deleteProject(\''+p.id+'\')">✕</button>'+
+      '</div></div>';
+  }).join('') : '<div class="empty"><div class="ico">📁</div><p>No hay proyectos con este filtro.</p></div>';
 }
 
-window.openProject = function
-window._real_openProject = window.openProject;(id){
+window.openProject = function(id) {
   ensureShape(); currentProjectId=id; currentProjectTab='resumen';
   document.getElementById('projectListView').classList.add('off');
   document.getElementById('projectDetailView').classList.add('on');
   renderProjectDetail();
 };
-window.closeProjectDetail = function
-window._real_closeProjectDetail = window.closeProjectDetail;(){
+window.closeProjectDetail = function() {
   currentProjectId=null;
   document.getElementById('projectDetailView').classList.remove('on');
   document.getElementById('projectListView').classList.remove('off');
   renderProjects();
 };
-window.setProjectTab = function
-window._real_setProjectTab = window.setProjectTab;(tab,el){
+window.setProjectTab = function(tab,el) {
   currentProjectTab=tab;
-  document.querySelectorAll('.proj-tab').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('.proj-tab').forEach(function(t){t.classList.remove('active');});
   if(el) el.classList.add('active');
   renderProjectDetail();
 };
 
-function renderProjectDetail(){
-  const box = document.getElementById('projectDetailView'); if(!box) return;
-  if(!currentProjectId){box.innerHTML='';return;}
-  const p = state.projects.find(x=>x.id===currentProjectId); if(!p){closeProjectDetail();return;}
-  const tareas   = state.tasks.filter(t=>t.project===p.id);
-  const abiertas = tareas.filter(t=>t.status!=='terminada');
-  const cerradas = tareas.filter(t=>t.status==='terminada');
-  const reuniones= state.meetings.filter(m=>m.project===p.id).sort((a,b)=>(a.date||'').localeCompare(b.date||''));
-  const casos    = state.cases.filter(c=>c.project===p.id);
-  const notas    = state.notes.filter(n=>n.project===p.id).sort((a,b)=>b.date.localeCompare(a.date));
-  const pct      = tareas.length ? Math.round(cerradas.length/tareas.length*100) : p.progress||0;
-  const tab      = currentProjectTab;
-  box.innerHTML = `<div class="proj-hero">
-    <button class="proj-back" onclick="closeProjectDetail()">← Volver</button>
-    <h2>${esc(p.name)}</h2><p>${esc(p.desc||'Sin descripción.')}</p>
-    <div class="proj-hero-meta">
-      <span class="tag ${tagClass(p.priority)}">Prioridad ${esc(p.priority)}</span>
-      <span class="tag tag-blue">${esc(p.status)}</span>
-      <span class="tag tag-rose">${esc(p.owner)}</span>
-      <span class="tag tag-gold">${pct}% avance real</span>
-    </div>
-  </div>
-  <div class="proj-tabs">
-    ${pt('resumen','Resumen',tab)}${pt('tareas','Tareas',tab)}${pt('casos','Casos',tab)}
-    ${pt('reuniones','Reuniones',tab)}${pt('bitacora','Bitácora',tab)}${pt('proximos','Próximos pasos',tab)}
-  </div>
-  <div class="proj-panel ${tab==='resumen'?'active':''}">
-    <div class="proj-kpis">
-      <div class="proj-kpi"><div class="n">${tareas.length}</div><div class="l">tareas</div></div>
-      <div class="proj-kpi"><div class="n">${abiertas.length}</div><div class="l">abiertas</div></div>
-      <div class="proj-kpi"><div class="n">${casos.filter(c=>c.status!=='cerrado').length}</div><div class="l">casos abiertos</div></div>
-      <div class="proj-kpi"><div class="n">${reuniones.filter(m=>m.date>=isoAdd(0)).length}</div><div class="l">reuniones próximas</div></div>
-    </div>
-    <div class="proj-summary-grid">
-      <div class="card"><div class="card-title">🔥 Pendientes</div>${pminiTasks(abiertas.slice(0,5))}</div>
-      <div class="card"><div class="card-title">🎯 Casos</div>${pminiCases(casos.filter(c=>c.status!=='cerrado').slice(0,4))}</div>
-      <div class="card"><div class="card-title">📝 Próximas reuniones</div>${pminiMeets(reuniones.filter(m=>m.date>=isoAdd(0)).slice(0,4))}</div>
-      <div class="card"><div class="card-title">📓 Notas</div>${pminiNotes(notas.slice(0,4))}</div>
-    </div>
-  </div>
-  <div class="proj-panel ${tab==='tareas'?'active':''}">
-    <div style="display:flex;justify-content:flex-end;margin-bottom:10px"><button class="btn btn-primary btn-sm" onclick="openModal('task','${p.id}')">+ Tarea</button></div>
-    ${ptaskList(tareas)}
-  </div>
-  <div class="proj-panel ${tab==='casos'?'active':''}">
-    <div style="display:flex;justify-content:flex-end;margin-bottom:10px"><button class="btn btn-primary btn-sm" onclick="openModal('case','${p.id}')">+ Caso</button></div>
-    <div class="case-grid">${casos.length?casos.map(pcaseCard).join(''):'<div class="proj-empty">No hay casos vinculados.</div>'}</div>
-  </div>
-  <div class="proj-panel ${tab==='reuniones'?'active':''}">
-    <div style="display:flex;justify-content:flex-end;margin-bottom:10px"><button class="btn btn-primary btn-sm" onclick="openModal('meeting','${p.id}')">+ Reunión</button></div>
-    ${pmeetList(reuniones)}
-  </div>
-  <div class="proj-panel ${tab==='bitacora'?'active':''}">
-    <div style="display:flex;justify-content:flex-end;margin-bottom:10px"><button class="btn btn-primary btn-sm" onclick="openModal('note','${p.id}')">+ Nota</button></div>
-    ${pnoteList(notas)}
-  </div>
-  <div class="proj-panel ${tab==='proximos'?'active':''}">
-    ${pnextSteps(p,abiertas,casos,reuniones)}
-  </div>`;
+function renderProjectDetail() {
+  var box = document.getElementById('projectDetailView'); if(!box) return;
+  if (!currentProjectId) { box.innerHTML=''; return; }
+  var p = null;
+  for (var i=0;i<state.projects.length;i++) { if(state.projects[i].id===currentProjectId){p=state.projects[i];break;} }
+  if (!p) { closeProjectDetail(); return; }
+  var tareas    = state.tasks.filter(function(t){return t.project===p.id;});
+  var abiertas  = tareas.filter(function(t){return t.status!=='terminada';});
+  var cerradas  = tareas.filter(function(t){return t.status==='terminada';});
+  var reuniones = state.meetings.filter(function(m){return m.project===p.id;}).sort(function(a,b){return (a.date||'').localeCompare(b.date||'');});
+  var casos     = state.cases.filter(function(c){return c.project===p.id;});
+  var notas     = state.notes.filter(function(n){return n.project===p.id;}).sort(function(a,b){return b.date.localeCompare(a.date);});
+  var pct       = tareas.length ? Math.round(cerradas.length/tareas.length*100) : (p.progress||0);
+  var tab       = currentProjectTab;
+  box.innerHTML =
+    '<div class="proj-hero">'+
+      '<button class="proj-back" onclick="closeProjectDetail()">← Volver</button>'+
+      '<h2>'+esc(p.name)+'</h2><p>'+esc(p.desc||'Sin descripción.')+'</p>'+
+      '<div class="proj-hero-meta">'+
+        '<span class="tag '+tagClass(p.priority)+'">'+esc(p.priority)+'</span>'+
+        '<span class="tag tag-blue">'+esc(p.status)+'</span>'+
+        '<span class="tag tag-rose">'+esc(p.owner)+'</span>'+
+        '<span class="tag tag-gold">'+pct+'% avance</span>'+
+      '</div></div>'+
+    '<div class="proj-tabs">'+
+      pt('resumen','Resumen',tab)+pt('tareas','Tareas',tab)+pt('casos','Casos',tab)+
+      pt('reuniones','Reuniones',tab)+pt('bitacora','Bitácora',tab)+pt('proximos','Próximos pasos',tab)+
+    '</div>'+
+    '<div class="proj-panel '+(tab==='resumen'?'active':'')+'">'+
+      '<div class="proj-kpis">'+
+        '<div class="proj-kpi"><div class="n">'+tareas.length+'</div><div class="l">tareas</div></div>'+
+        '<div class="proj-kpi"><div class="n">'+abiertas.length+'</div><div class="l">abiertas</div></div>'+
+        '<div class="proj-kpi"><div class="n">'+casos.filter(function(c){return c.status!=='cerrado';}).length+'</div><div class="l">casos</div></div>'+
+        '<div class="proj-kpi"><div class="n">'+reuniones.filter(function(m){return m.date>=isoAdd(0);}).length+'</div><div class="l">reuniones</div></div>'+
+      '</div>'+
+      '<div class="proj-summary-grid">'+
+        '<div class="card"><div class="card-title">🔥 Pendientes</div>'+pminiTasks(abiertas.slice(0,5))+'</div>'+
+        '<div class="card"><div class="card-title">🎯 Casos</div>'+pminiCases(casos.filter(function(c){return c.status!=='cerrado';}).slice(0,4))+'</div>'+
+        '<div class="card"><div class="card-title">📝 Reuniones</div>'+pminiMeets(reuniones.filter(function(m){return m.date>=isoAdd(0);}).slice(0,4))+'</div>'+
+        '<div class="card"><div class="card-title">📓 Notas</div>'+pminiNotes(notas.slice(0,4))+'</div>'+
+      '</div></div>'+
+    '<div class="proj-panel '+(tab==='tareas'?'active':'')+'">'+
+      '<div style="display:flex;justify-content:flex-end;margin-bottom:10px"><button class="btn btn-primary btn-sm" onclick="openModal(\'task\',\''+p.id+'\')">+ Tarea</button></div>'+
+      ptaskList(tareas)+'</div>'+
+    '<div class="proj-panel '+(tab==='casos'?'active':'')+'">'+
+      '<div style="display:flex;justify-content:flex-end;margin-bottom:10px"><button class="btn btn-primary btn-sm" onclick="openModal(\'case\',\''+p.id+'\')">+ Caso</button></div>'+
+      '<div class="case-grid">'+(casos.length?casos.map(pcaseCard).join(''):'<div class="proj-empty">No hay casos.</div>')+'</div></div>'+
+    '<div class="proj-panel '+(tab==='reuniones'?'active':'')+'">'+
+      '<div style="display:flex;justify-content:flex-end;margin-bottom:10px"><button class="btn btn-primary btn-sm" onclick="openModal(\'meeting\',\''+p.id+'\')">+ Reunión</button></div>'+
+      pmeetList(reuniones)+'</div>'+
+    '<div class="proj-panel '+(tab==='bitacora'?'active':'')+'">'+
+      '<div style="display:flex;justify-content:flex-end;margin-bottom:10px"><button class="btn btn-primary btn-sm" onclick="openModal(\'note\',\''+p.id+'\')">+ Nota</button></div>'+
+      pnoteList(notas)+'</div>'+
+    '<div class="proj-panel '+(tab==='proximos'?'active':'')+'">'+
+      pnextSteps(p,abiertas,casos,reuniones)+'</div>';
 }
-function pt(id,label,cur){ return `<button class="proj-tab ${cur===id?'active':''}" onclick="setProjectTab('${id}',this)">${label}</button>`; }
-function pminiTasks(items){ return items.length?items.map(t=>`<div class="mini-item"><span class="dot ${t.priority}"></span><div><div class="mini-title">${esc(t.title)}</div><div class="mini-meta">${esc(t.status)} · ${fmt(t.due)}</div></div></div>`).join(''):'<div class="proj-empty">Sin pendientes.</div>'; }
-function pminiCases(items){ return items.length?items.map(c=>`<div class="mini-item"><span class="dot ${c.alert}"></span><div><div class="mini-title">${esc(c.name)}</div><div class="mini-meta">alerta ${esc(c.alert)}</div></div></div>`).join(''):'<div class="proj-empty">Sin casos abiertos.</div>'; }
-function pminiMeets(items){ return items.length?items.map(m=>`<div class="mini-item"><span class="dot media"></span><div><div class="mini-title">${esc(m.title)}</div><div class="mini-meta">${fmt(m.date)}</div></div></div>`).join(''):'<div class="proj-empty">Sin reuniones próximas.</div>'; }
-function pminiNotes(items){ return items.length?items.map(n=>`<div class="mini-item"><span class="dot baja"></span><div><div class="mini-title">${esc(n.kind)}</div><div class="mini-meta">${esc(n.text.slice(0,80))}</div></div></div>`).join(''):'<div class="proj-empty">Sin notas.</div>'; }
-function ptaskList(items){ return items.length?items.map(t=>`<div class="task ${t.priority}"><div class="check ${t.status==='terminada'?'done':''}" onclick="toggleTask('${t.id}')"></div><div class="task-body"><div class="task-title ${t.status==='terminada'?'done':''}">${esc(t.title)}</div><div class="task-desc">${esc(t.desc||'')}</div><div class="task-meta"><span class="tag ${tagClass(t.priority)}">${t.priority}</span><span class="tag tag-olive">${t.status}</span><span class="tag tag-gold">${fmt(t.due)}</span><span class="tag tag-rose">${esc(t.owner)}</span></div></div><div class="task-actions"><button class="btn btn-ghost btn-sm" onclick="deleteTask('${t.id}')">✕</button></div></div>`).join(''):'<div class="proj-empty">Sin tareas.</div>'; }
-function pcaseCard(c){ return `<div class="case-card alerta-${esc(c.alert)}"><div class="case-top"><div><div class="case-name">${esc(c.name)}</div><div class="case-type">${esc(c.type)}</div></div><span class="tag ${tagClass(c.alert)}">${esc(c.alert)}</span></div><div class="case-desc">${esc(c.desc||'')}</div><div class="case-meta"><span class="tag tag-olive">${esc(c.status)}</span><span class="tag tag-gold">${fmt(c.due)}</span></div><div class="case-next"><b>Próxima acción</b><span>${esc(c.next||'Sin definir.')}</span></div><div class="case-history"><b>Historial:</b> ${esc(c.history||'Sin historial.')}</div><div style="display:flex;gap:6px;margin-top:12px;justify-content:flex-end"><button class="btn btn-outline btn-sm" onclick="openModal('caseTask','${c.id}')">+ Tarea</button><button class="btn btn-ghost btn-sm" onclick="closeCase('${c.id}')">${c.status==='cerrado'?'Reabrir':'Cerrar'}</button></div></div>`; }
-function pmeetList(items){ return items.length?items.map(m=>`<div class="meeting"><div class="meeting-head"><div><div class="meeting-title">${esc(m.title)}</div><div class="meeting-meta">${fmt(m.date)} · ${esc(m.people)}</div></div><button class="btn btn-ghost btn-sm" onclick="deleteMeeting('${m.id}')">✕</button></div><p><b>Temas:</b> ${esc(m.topics||'')}</p><p><b>Acuerdos:</b> ${esc(m.agreements||'')}</p></div>`).join(''):'<div class="proj-empty">Sin reuniones.</div>'; }
-function pnoteList(items){ return items.length?items.map(n=>`<div class="note"><div class="note-head"><div class="note-kind">${esc(n.kind)}</div><div class="note-date">${new Date(n.date).toLocaleString('es-CL')}</div></div><p>${esc(n.text)}</p><div style="margin-top:8px"><button class="btn btn-ghost btn-sm" onclick="deleteNote('${n.id}')">Eliminar</button></div></div>`).join(''):'<div class="proj-empty">Sin notas.</div>'; }
+function pt(id,label,cur){ return '<button class="proj-tab '+(cur===id?'active':'')+'" onclick="setProjectTab(\''+id+'\',this)">'+label+'</button>'; }
+function pminiTasks(items){ return items.length?items.map(function(t){return '<div class="mini-item"><span class="dot '+t.priority+'"></span><div><div class="mini-title">'+esc(t.title)+'</div><div class="mini-meta">'+esc(t.status)+' · '+fmt(t.due)+'</div></div></div>';}).join(''):'<div class="proj-empty">Sin pendientes.</div>'; }
+function pminiCases(items){ return items.length?items.map(function(c){return '<div class="mini-item"><span class="dot '+c.alert+'"></span><div><div class="mini-title">'+esc(c.name)+'</div><div class="mini-meta">alerta '+esc(c.alert)+'</div></div></div>';}).join(''):'<div class="proj-empty">Sin casos.</div>'; }
+function pminiMeets(items){ return items.length?items.map(function(m){return '<div class="mini-item"><span class="dot media"></span><div><div class="mini-title">'+esc(m.title)+'</div><div class="mini-meta">'+fmt(m.date)+'</div></div></div>';}).join(''):'<div class="proj-empty">Sin reuniones próximas.</div>'; }
+function pminiNotes(items){ return items.length?items.map(function(n){return '<div class="mini-item"><span class="dot baja"></span><div><div class="mini-title">'+esc(n.kind)+'</div><div class="mini-meta">'+esc(n.text.slice(0,80))+'</div></div></div>';}).join(''):'<div class="proj-empty">Sin notas.</div>'; }
+function ptaskList(items){ return items.length?items.map(function(t){return '<div class="task '+t.priority+'"><div class="check '+(t.status==='terminada'?'done':'')+'" onclick="toggleTask(\''+t.id+'\')"></div><div class="task-body"><div class="task-title '+(t.status==='terminada'?'done':'')+'">'+esc(t.title)+'</div><div class="task-desc">'+esc(t.desc||'')+'</div><div class="task-meta"><span class="tag '+tagClass(t.priority)+'">'+t.priority+'</span><span class="tag tag-olive">'+t.status+'</span><span class="tag tag-gold">'+fmt(t.due)+'</span><span class="tag tag-rose">'+esc(t.owner)+'</span></div></div><div class="task-actions"><button class="btn btn-ghost btn-sm" onclick="deleteTask(\''+t.id+'\')">✕</button></div></div>';}).join(''):'<div class="proj-empty">Sin tareas.</div>'; }
+function pcaseCard(c){ return '<div class="case-card alerta-'+esc(c.alert)+'"><div class="case-top"><div><div class="case-name">'+esc(c.name)+'</div><div class="case-type">'+esc(c.type)+'</div></div><span class="tag '+tagClass(c.alert)+'">'+esc(c.alert)+'</span></div><div class="case-desc">'+esc(c.desc||'')+'</div><div class="case-meta"><span class="tag tag-olive">'+esc(c.status)+'</span><span class="tag tag-gold">'+fmt(c.due)+'</span></div><div class="case-next"><b>Próxima acción</b><span>'+esc(c.next||'Sin definir.')+'</span></div><div class="case-history"><b>Historial:</b> '+esc(c.history||'Sin historial.')+'</div><div style="display:flex;gap:6px;margin-top:12px;justify-content:flex-end"><button class="btn btn-outline btn-sm" onclick="openModal(\'caseTask\',\''+c.id+'\')">+ Tarea</button><button class="btn btn-ghost btn-sm" onclick="closeCase(\''+c.id+'\')">'+(c.status==='cerrado'?'Reabrir':'Cerrar')+'</button></div></div>'; }
+function pmeetList(items){ return items.length?items.map(function(m){return '<div class="meeting"><div class="meeting-head"><div><div class="meeting-title">'+esc(m.title)+'</div><div class="meeting-meta">'+fmt(m.date)+' · '+esc(m.people)+'</div></div><button class="btn btn-ghost btn-sm" onclick="deleteMeeting(\''+m.id+'\')">✕</button></div><p><b>Temas:</b> '+esc(m.topics||'')+'</p><p><b>Acuerdos:</b> '+esc(m.agreements||'')+'</p></div>';}).join(''):'<div class="proj-empty">Sin reuniones.</div>'; }
+function pnoteList(items){ return items.length?items.map(function(n){return '<div class="note"><div class="note-head"><div class="note-kind">'+esc(n.kind)+'</div><div class="note-date">'+new Date(n.date).toLocaleString('es-CL')+'</div></div><p>'+esc(n.text)+'</p><div style="margin-top:8px"><button class="btn btn-ghost btn-sm" onclick="deleteNote(\''+n.id+'\')">Eliminar</button></div></div>';}).join(''):'<div class="proj-empty">Sin notas.</div>'; }
 function pnextSteps(p,tasks,cases,meetings){
-  const high    = tasks.filter(t=>t.priority==='alta').slice(0,3);
-  const blocked = tasks.filter(t=>t.status==='bloqueada').slice(0,3);
-  const cNext   = cases.filter(c=>c.status!=='cerrado').slice(0,3);
-  return `<div class="proj-next-box"><h4>1. Cerrar urgencias</h4><p>${high.length?high.map(t=>`• ${esc(t.title)} — ${fmt(t.due)}`).join('<br>'):'Sin tareas de alta prioridad.'}</p></div>
-  <div class="proj-next-box"><h4>2. Desbloquear pendientes</h4><p>${blocked.length?blocked.map(t=>`• ${esc(t.title)}`).join('<br>'):'Sin bloqueos.'}</p></div>
-  <div class="proj-next-box"><h4>3. Casos específicos</h4><p>${cNext.length?cNext.map(c=>`• ${esc(c.name)} — ${esc(c.next||'sin próxima acción')}`).join('<br>'):'Sin casos abiertos.'}</p></div>
-  <div class="proj-next-box"><h4>4. Preparar reunión próxima</h4><p>${meetings.filter(m=>m.date>=isoAdd(0)).length?meetings.filter(m=>m.date>=isoAdd(0)).slice(0,2).map(m=>`• ${fmt(m.date)} · ${esc(m.title)}`).join('<br>'):'Sin reuniones próximas.'}</p></div>`;
+  var high    = tasks.filter(function(t){return t.priority==='alta';}).slice(0,3);
+  var blocked = tasks.filter(function(t){return t.status==='bloqueada';}).slice(0,3);
+  var cNext   = cases.filter(function(c){return c.status!=='cerrado';}).slice(0,3);
+  var proxMeet= meetings.filter(function(m){return m.date>=isoAdd(0);}).slice(0,2);
+  return '<div class="proj-next-box"><h4>1. Cerrar urgencias</h4><p>'+(high.length?high.map(function(t){return '• '+esc(t.title)+' — '+fmt(t.due);}).join('<br>'):'Sin tareas de alta prioridad.')+'</p></div>'+
+    '<div class="proj-next-box"><h4>2. Desbloquear pendientes</h4><p>'+(blocked.length?blocked.map(function(t){return '• '+esc(t.title);}).join('<br>'):'Sin bloqueos.')+'</p></div>'+
+    '<div class="proj-next-box"><h4>3. Casos específicos</h4><p>'+(cNext.length?cNext.map(function(c){return '• '+esc(c.name)+' — '+esc(c.next||'sin próxima acción');}).join('<br>'):'Sin casos abiertos.')+'</p></div>'+
+    '<div class="proj-next-box"><h4>4. Próxima reunión</h4><p>'+(proxMeet.length?proxMeet.map(function(m){return '• '+fmt(m.date)+' · '+esc(m.title);}).join('<br>'):'Sin reuniones próximas.')+'</p></div>';
 }
 
-window.setProjectFilter = function
-window._real_setProjectFilter = window.setProjectFilter;(f,el){ projectFilter=f; el.parentElement.querySelectorAll('.pill').forEach(p=>p.classList.remove('active')); el.classList.add('active'); renderProjects(); };
-window.setTaskFilter    = function
-window._real_setTaskFilter = window.setTaskFilter;(f,el){ taskFilter=f;    el.parentElement.querySelectorAll('.pill').forEach(p=>p.classList.remove('active')); el.classList.add('active'); renderTasks(); };
-window.setCaseFilter    = function
-window._real_setCaseFilter = window.setCaseFilter;(f,el){ caseFilter=f;    el.parentElement.querySelectorAll('.pill').forEach(p=>p.classList.remove('active')); el.classList.add('active'); renderCases(); };
+window.setProjectFilter = function(f,el){ projectFilter=f; el.parentElement.querySelectorAll('.pill').forEach(function(p){p.classList.remove('active');}); el.classList.add('active'); renderProjects(); };
+window.setTaskFilter    = function(f,el){ taskFilter=f;    el.parentElement.querySelectorAll('.pill').forEach(function(p){p.classList.remove('active');}); el.classList.add('active'); renderTasks(); };
+window.setCaseFilter    = function(f,el){ caseFilter=f;    el.parentElement.querySelectorAll('.pill').forEach(function(p){p.classList.remove('active');}); el.classList.add('active'); renderCases(); };
 
-function renderTasks(){
-  let arr = searchFilter(state.tasks,['title','desc','owner','type','status','priority']);
-  if(taskFilter!=='todas') arr = arr.filter(t=>['pendiente','en proceso','bloqueada','terminada'].includes(taskFilter)?t.status===taskFilter:t.priority===taskFilter);
-  arr.sort((a,b)=>(a.status==='terminada')-(b.status==='terminada')||(a.due||'').localeCompare(b.due||''));
+function renderTasks() {
+  var arr = searchFilter(state.tasks,['title','desc','owner','type','status','priority']);
+  if (taskFilter !== 'todas') arr = arr.filter(function(t){ return ['pendiente','en proceso','bloqueada','terminada'].indexOf(taskFilter)>-1 ? t.status===taskFilter : t.priority===taskFilter; });
+  arr.sort(function(a,b){ return (a.status==='terminada'?1:0)-(b.status==='terminada'?1:0) || (a.due||'').localeCompare(b.due||''); });
   document.getElementById('taskList').innerHTML = arr.length
-    ? arr.map(t=>`<div class="task ${t.priority}"><div class="check ${t.status==='terminada'?'done':''}" onclick="toggleTask('${t.id}')"></div><div class="task-body"><div class="task-title ${t.status==='terminada'?'done':''}">${esc(t.title)}</div><div class="task-desc">${esc(t.desc||'')}</div><div class="task-meta"><span class="tag tag-blue">${esc(projName(t.project))}</span><span class="tag ${tagClass(t.priority)}">${t.priority}</span><span class="tag tag-olive">${t.status}</span><span class="tag tag-gold">${fmt(t.due)}</span><span class="tag tag-rose">${esc(t.owner)}</span></div></div><div class="task-actions"><button class="btn btn-ghost btn-sm" onclick="deleteTask('${t.id}')">✕</button></div></div>`).join('')
-    : `<div class="empty"><div class="ico">✅</div><p>No hay tareas para este filtro.</p></div>`;
+    ? arr.map(function(t){ return '<div class="task '+t.priority+'"><div class="check '+(t.status==='terminada'?'done':'')+'" onclick="toggleTask(\''+t.id+'\')"></div><div class="task-body"><div class="task-title '+(t.status==='terminada'?'done':'')+'">'+esc(t.title)+'</div><div class="task-desc">'+esc(t.desc||'')+'</div><div class="task-meta"><span class="tag tag-blue">'+esc(projName(t.project))+'</span><span class="tag '+tagClass(t.priority)+'">'+t.priority+'</span><span class="tag tag-olive">'+t.status+'</span><span class="tag tag-gold">'+fmt(t.due)+'</span><span class="tag tag-rose">'+esc(t.owner)+'</span></div></div><div class="task-actions"><button class="btn btn-ghost btn-sm" onclick="deleteTask(\''+t.id+'\')">✕</button></div></div>'; }).join('')
+    : '<div class="empty"><div class="ico">✅</div><p>No hay tareas para este filtro.</p></div>';
 }
 
-function renderWeek(){
-  const names=['Lunes','Martes','Miércoles','Jueves','Viernes'];
-  const monday=new Date(today); const day=today.getDay()||7; monday.setDate(today.getDate()-day+1);
-  document.getElementById('weekGrid').innerHTML = names.map((name,i)=>{
-    const d=new Date(monday); d.setDate(monday.getDate()+i); const iso=d.toISOString().slice(0,10);
-    const tasks=state.tasks.filter(t=>t.due===iso);
-    const meets=state.meetings.filter(m=>m.date===iso);
-    return `<div class="daycol"><div class="dayhd"><div class="dayname">${name}</div><div class="daydate">${fmt(iso)}</div></div><div class="daybody">${meets.map(m=>`<div class="daytask"><b>📝 ${esc(m.title)}</b><p>${esc(m.people)}</p></div>`).join('')}${tasks.map(t=>`<div class="daytask"><b>${t.status==='terminada'?'✓':'•'} ${esc(t.title)}</b><p>${esc(projName(t.project))} · ${t.priority}</p></div>`).join('')||(!meets.length?'<div class="empty" style="padding:20px 5px"><p>Sin pendientes</p></div>':'')}</div></div>`;
+function renderWeek() {
+  var names=['Lunes','Martes','Miércoles','Jueves','Viernes'];
+  var monday=new Date(today); var day=today.getDay()||7; monday.setDate(today.getDate()-day+1);
+  document.getElementById('weekGrid').innerHTML = names.map(function(name,i){
+    var d=new Date(monday); d.setDate(monday.getDate()+i); var iso=d.toISOString().slice(0,10);
+    var tasks=state.tasks.filter(function(t){return t.due===iso;});
+    var meets=state.meetings.filter(function(m){return m.date===iso;});
+    return '<div class="daycol"><div class="dayhd"><div class="dayname">'+name+'</div><div class="daydate">'+fmt(iso)+'</div></div><div class="daybody">'+
+      meets.map(function(m){return '<div class="daytask"><b>📝 '+esc(m.title)+'</b><p>'+esc(m.people)+'</p></div>';}).join('')+
+      tasks.map(function(t){return '<div class="daytask"><b>'+(t.status==='terminada'?'✓':'•')+' '+esc(t.title)+'</b><p>'+esc(projName(t.project))+' · '+t.priority+'</p></div>';}).join('')+
+      (!meets.length && !tasks.length?'<div class="empty" style="padding:20px 5px"><p>Sin pendientes</p></div>':'')+
+      '</div></div>';
   }).join('');
 }
 
-function renderCases(){
-  let arr = searchFilter(state.cases,['name','type','program','status','alert','owner','desc','next','history']);
-  if(caseFilter!=='todos') arr = arr.filter(c=>['abierto','en seguimiento','bloqueado','cerrado'].includes(caseFilter)?c.status===caseFilter:c.alert===caseFilter);
-  arr.sort((a,b)=>({alta:0,media:1,baja:2}[a.alert]??3)-({alta:0,media:1,baja:2}[b.alert]??3)||(a.due||'').localeCompare(b.due||''));
+function renderCases() {
+  var arr = searchFilter(state.cases,['name','type','program','status','alert','owner','desc','next','history']);
+  if (caseFilter !== 'todos') arr = arr.filter(function(c){ return ['abierto','en seguimiento','bloqueado','cerrado'].indexOf(caseFilter)>-1 ? c.status===caseFilter : c.alert===caseFilter; });
+  var alertOrder = {alta:0,media:1,baja:2};
+  arr.sort(function(a,b){ return (alertOrder[a.alert]||3)-(alertOrder[b.alert]||3) || (a.due||'').localeCompare(b.due||''); });
   document.getElementById('caseGrid').innerHTML = arr.length
-    ? arr.map(c=>`<div class="case-card alerta-${esc(c.alert)}">
-        <div class="case-top"><div><div class="case-name">${esc(c.name)}</div><div class="case-type">${esc(c.type)} · ${esc(c.program||'Sin programa')}</div></div><span class="tag ${tagClass(c.alert)}">alerta ${esc(c.alert)}</span></div>
-        <div class="case-desc">${esc(c.desc||'')}</div>
-        <div class="case-meta"><span class="tag tag-blue">${esc(projName(c.project))}</span><span class="tag tag-olive">${esc(c.status)}</span><span class="tag tag-gold">${fmt(c.due)}</span><span class="tag tag-rose">${esc(c.owner)}</span></div>
-        <div class="case-next"><b>Próxima acción</b><span>${esc(c.next||'Sin próxima acción.')}</span></div>
-        <div class="case-history"><b>Historial:</b> ${esc(c.history||'Sin historial.')}</div>
-        <div style="display:flex;gap:6px;margin-top:12px;justify-content:flex-end">
-          <button class="btn btn-outline btn-sm" onclick="openModal('caseTask','${c.id}')">+ Tarea</button>
-          <button class="btn btn-ghost btn-sm" onclick="closeCase('${c.id}')">${c.status==='cerrado'?'Reabrir':'Cerrar'}</button>
-          <button class="btn btn-ghost btn-sm" onclick="deleteCase('${c.id}')">✕</button>
-        </div>
-      </div>`).join('')
-    : `<div class="empty"><div class="ico">🎯</div><p>No hay casos con este filtro.</p></div>`;
+    ? arr.map(function(c){ return '<div class="case-card alerta-'+esc(c.alert)+'">'+
+        '<div class="case-top"><div><div class="case-name">'+esc(c.name)+'</div><div class="case-type">'+esc(c.type)+' · '+esc(c.program||'Sin programa')+'</div></div><span class="tag '+tagClass(c.alert)+'">alerta '+esc(c.alert)+'</span></div>'+
+        '<div class="case-desc">'+esc(c.desc||'')+'</div>'+
+        '<div class="case-meta"><span class="tag tag-blue">'+esc(projName(c.project))+'</span><span class="tag tag-olive">'+esc(c.status)+'</span><span class="tag tag-gold">'+fmt(c.due)+'</span><span class="tag tag-rose">'+esc(c.owner)+'</span></div>'+
+        '<div class="case-next"><b>Próxima acción</b><span>'+esc(c.next||'Sin próxima acción.')+'</span></div>'+
+        '<div class="case-history"><b>Historial:</b> '+esc(c.history||'Sin historial.')+'</div>'+
+        '<div style="display:flex;gap:6px;margin-top:12px;justify-content:flex-end">'+
+          '<button class="btn btn-outline btn-sm" onclick="openModal(\'caseTask\',\''+c.id+'\')">+ Tarea</button>'+
+          '<button class="btn btn-ghost btn-sm" onclick="closeCase(\''+c.id+'\')">'+(c.status==='cerrado'?'Reabrir':'Cerrar')+'</button>'+
+          '<button class="btn btn-ghost btn-sm" onclick="deleteCase(\''+c.id+'\')">✕</button>'+
+        '</div></div>'; }).join('')
+    : '<div class="empty"><div class="ico">🎯</div><p>No hay casos con este filtro.</p></div>';
 }
 
-function renderMeetings(){
-  const arr = searchFilter(state.meetings,['title','people','topics','agreements']).sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+function renderMeetings() {
+  var arr = searchFilter(state.meetings,['title','people','topics','agreements']).sort(function(a,b){return (a.date||'').localeCompare(b.date||'');});
   document.getElementById('meetingList').innerHTML = arr.length
-    ? arr.map(m=>`<div class="meeting"><div class="meeting-head"><div><div class="meeting-title">${esc(m.title)}</div><div class="meeting-meta">${fmt(m.date)} · ${esc(m.people)} · ${esc(projName(m.project))}</div></div><button class="btn btn-ghost btn-sm" onclick="deleteMeeting('${m.id}')">✕</button></div><p><b>Temas:</b> ${esc(m.topics||'')}</p><p><b>Acuerdos:</b> ${esc(m.agreements||'')}</p></div>`).join('')
-    : `<div class="empty"><div class="ico">📝</div><p>No hay reuniones registradas.</p></div>`;
+    ? arr.map(function(m){ return '<div class="meeting"><div class="meeting-head"><div><div class="meeting-title">'+esc(m.title)+'</div><div class="meeting-meta">'+fmt(m.date)+' · '+esc(m.people)+' · '+esc(projName(m.project))+'</div></div><button class="btn btn-ghost btn-sm" onclick="deleteMeeting(\''+m.id+'\')">✕</button></div><p><b>Temas:</b> '+esc(m.topics||'')+'</p><p><b>Acuerdos:</b> '+esc(m.agreements||'')+'</p></div>'; }).join('')
+    : '<div class="empty"><div class="ico">📝</div><p>No hay reuniones registradas.</p></div>';
 }
 
-function renderNotes(){
-  const arr = searchFilter(state.notes,['kind','text']).sort((a,b)=>b.date.localeCompare(a.date));
+function renderNotes() {
+  var arr = searchFilter(state.notes,['kind','text']).sort(function(a,b){return b.date.localeCompare(a.date);});
   document.getElementById('noteList').innerHTML = arr.length
-    ? arr.map(n=>`<div class="note"><div class="note-head"><div class="note-kind">${esc(n.kind)} · ${esc(projName(n.project))}</div><div class="note-date">${new Date(n.date).toLocaleString('es-CL')}</div></div><p>${esc(n.text)}</p><div style="margin-top:8px"><button class="btn btn-ghost btn-sm" onclick="deleteNote('${n.id}')">Eliminar</button></div></div>`).join('')
-    : `<div class="empty"><div class="ico">📓</div><p>No hay notas todavía.</p></div>`;
+    ? arr.map(function(n){ return '<div class="note"><div class="note-head"><div class="note-kind">'+esc(n.kind)+' · '+esc(projName(n.project))+'</div><div class="note-date">'+new Date(n.date).toLocaleString('es-CL')+'</div></div><p>'+esc(n.text)+'</p><div style="margin-top:8px"><button class="btn btn-ghost btn-sm" onclick="deleteNote(\''+n.id+'\')">Eliminar</button></div></div>'; }).join('')
+    : '<div class="empty"><div class="ico">📓</div><p>No hay notas todavía.</p></div>';
 }
 
-function renderAccess(){
-  const users = window._fbUsers || {};
-  const rows  = Object.values(users).sort((a,b)=>(a.addedAt||0)-(b.addedAt||0));
-  const isAdmin = currentUser?.email === ADMIN_EMAIL;
+function renderAccess() {
+  var users = window._fbUsers || {};
+  var rows  = Object.values ? Object.values(users) : Object.keys(users).map(function(k){return users[k];});
+  rows.sort(function(a,b){return (a.addedAt||0)-(b.addedAt||0);});
+  var isAdmin = currentUser && currentUser.email === ADMIN_EMAIL;
   document.getElementById('accessList').innerHTML = rows.length
-    ? rows.map(u=>`
-        <div class="access-row">
-          <div>
-            <div class="access-name">${esc(u.name||u.email)} ${u.email===currentUser?.email?'<span class="access-you">tú</span>':''}</div>
-            <div class="access-mail">${esc(u.email)}</div>
-          </div>
-          <div style="display:flex;align-items:center;gap:7px">
-            <span class="tag tag-blue">${esc(u.role||'Editor')}</span>
-            ${isAdmin && u.email !== ADMIN_EMAIL
-              ? `<button class="btn btn-ghost btn-sm" onclick="removeUserFromDB('${u.email}')">✕</button>`
-              : ''}
-          </div>
-        </div>`)
-      .join('')
+    ? rows.map(function(u){ return '<div class="access-row">'+
+        '<div><div class="access-name">'+esc(u.name||u.email)+(currentUser && u.email===currentUser.email?' <span class="access-you">tú</span>':'')+'</div>'+
+        '<div class="access-mail">'+esc(u.email)+'</div></div>'+
+        '<div style="display:flex;align-items:center;gap:7px">'+
+          '<span class="tag tag-blue">'+esc(u.role||'Editor')+'</span>'+
+          (isAdmin && u.email !== ADMIN_EMAIL ? '<button class="btn btn-ghost btn-sm" onclick="removeUserFromDB(\''+u.email+'\')">✕</button>' : '')+
+        '</div></div>'; }).join('')
     : '<div style="padding:18px;text-align:center;color:var(--dim)">Cargando usuarios…</div>';
 }
 
-/* ── MODAL ── */
-window.navTo = function
-window._real_navTo = window.navTo;(sec){
-  document.querySelectorAll('.sec').forEach(s=>s.classList.remove('active'));
+/* ── NAVEGACIÓN ── */
+window.navTo = function(sec) {
+  document.querySelectorAll('.sec').forEach(function(s){s.classList.remove('active');});
   document.getElementById('sec-'+sec).classList.add('active');
-  document.querySelectorAll('.navitem').forEach(n=>n.classList.remove('active'));
-  [...document.querySelectorAll('.navitem')].find(n=>n.getAttribute('onclick')?.includes(sec))?.classList.add('active');
+  document.querySelectorAll('.navitem').forEach(function(n){n.classList.remove('active');});
+  var items = document.querySelectorAll('.navitem');
+  for (var i=0;i<items.length;i++) { if((items[i].getAttribute('onclick')||'').indexOf(sec)>-1){items[i].classList.add('active');break;} }
   renderAll();
 };
 
-function val(id,fallback=''){ const el=document.getElementById(id); return el?String(el.value||'').trim():fallback; }
-function numVal(id,fallback=0){ const n=Number(val(id,fallback)); return Number.isFinite(n)?n:fallback; }
+/* ── MODAL ── */
+function val(id,fallback) { var el=document.getElementById(id); return el?String(el.value||'').trim():(fallback||''); }
+function numVal(id,fallback) { var n=Number(val(id,fallback||0)); return isFinite(n)?n:(fallback||0); }
 
-function bindModalButtons(){
-  const m = document.getElementById('modal');
-  m.querySelectorAll('[data-close-modal]').forEach(b=>b.onclick=closeModal);
-  m.querySelectorAll('[data-save-modal]').forEach(b=>b.onclick=handleModalSave);
+function bindModalButtons() {
+  var m = document.getElementById('modal');
+  m.querySelectorAll('[data-close-modal]').forEach(function(b){b.onclick=closeModal;});
+  m.querySelectorAll('[data-save-modal]').forEach(function(b){b.onclick=handleModalSave;});
 }
-function handleModalSave(){
-  try{
-    const t=modalContext.type;
+function handleModalSave() {
+  try {
+    var t=modalContext.type;
     if(t==='project')  return saveProject();
     if(t==='task')     return saveTask();
     if(t==='meeting')  return saveMeeting();
@@ -1051,161 +944,158 @@ function handleModalSave(){
     if(t==='case')     return saveCase();
     if(t==='caseTask') return saveCaseTask(modalContext.ctx);
     if(t==='user')     return addUserToDB();
-  }catch(err){ console.error(err); toast('Error al guardar: '+(err?.message||'revisa los campos')); }
+  } catch(err) { console.error(err); toast('Error al guardar'); }
 }
 
-window.openModal = function
-window._real_openModal = window.openModal;(type,ctx=''){
-  ensureShape(); modalContext={type,ctx};
-  const po = state.projects.map(p=>`<option value="${p.id}" ${ctx===p.id?'selected':''}>${esc(p.name)}</option>`).join('');
-  const m  = document.getElementById('modal');
+window.openModal = function(type, ctx) {
+  ctx = ctx || '';
+  ensureShape(); modalContext={type:type,ctx:ctx};
+  var ownerName = currentUser ? (currentUser.displayName ? currentUser.displayName.split(' ')[0] : 'Fabián') : 'Fabián';
+  var po = state.projects.map(function(p){return '<option value="'+p.id+'" '+(ctx===p.id?'selected':'')+'>'+esc(p.name)+'</option>';}).join('');
+  var m = document.getElementById('modal');
 
-  if(type==='project') m.innerHTML=`<h3>Nuevo proyecto</h3>
-    <div class="formrow"><label>Nombre</label><input id="mName" autocomplete="off"></div>
-    <div class="formrow"><label>Descripción</label><textarea id="mDesc"></textarea></div>
-    <div class="grid grid2"><div class="formrow"><label>Estado</label><select id="mStatus"><option>activo</option><option>pausado</option><option>cerrado</option></select></div><div class="formrow"><label>Prioridad</label><select id="mPriority"><option>alta</option><option>media</option><option>baja</option></select></div></div>
-    <div class="grid grid2"><div class="formrow"><label>Responsable</label><input id="mOwner" value="${esc(currentUser?.displayName?.split(' ')[0]||'Fabián')}"></div><div class="formrow"><label>Avance %</label><input id="mProgress" type="number" min="0" max="100" value="0"></div></div>
-    <div class="actions"><button type="button" class="btn btn-outline" data-close-modal>Cancelar</button><button type="button" class="btn btn-primary" data-save-modal>Guardar</button></div>`;
+  if(type==='project') m.innerHTML='<h3>Nuevo proyecto</h3>'+
+    '<div class="formrow"><label>Nombre</label><input id="mName" autocomplete="off"></div>'+
+    '<div class="formrow"><label>Descripción</label><textarea id="mDesc"></textarea></div>'+
+    '<div class="grid grid2"><div class="formrow"><label>Estado</label><select id="mStatus"><option>activo</option><option>pausado</option><option>cerrado</option></select></div><div class="formrow"><label>Prioridad</label><select id="mPriority"><option>alta</option><option>media</option><option>baja</option></select></div></div>'+
+    '<div class="grid grid2"><div class="formrow"><label>Responsable</label><input id="mOwner" value="'+esc(ownerName)+'"></div><div class="formrow"><label>Avance %</label><input id="mProgress" type="number" min="0" max="100" value="0"></div></div>'+
+    '<div class="actions"><button type="button" class="btn btn-outline" data-close-modal>Cancelar</button><button type="button" class="btn btn-primary" data-save-modal>Guardar</button></div>';
 
-  if(type==='task') m.innerHTML=`<h3>Nueva tarea</h3>
-    <div class="formrow"><label>Título</label><input id="mTitle" autocomplete="off"></div>
-    <div class="formrow"><label>Descripción</label><textarea id="mDesc"></textarea></div>
-    <div class="formrow"><label>Proyecto</label><select id="mProject">${po}</select></div>
-    <div class="grid grid2"><div class="formrow"><label>Estado</label><select id="mStatus"><option>pendiente</option><option>en proceso</option><option>bloqueada</option><option>terminada</option></select></div><div class="formrow"><label>Prioridad</label><select id="mPriority"><option>alta</option><option>media</option><option>baja</option></select></div></div>
-    <div class="grid grid3"><div class="formrow"><label>Responsable</label><input id="mOwner" value="${esc(currentUser?.displayName?.split(' ')[0]||'Fabián')}"></div><div class="formrow"><label>Fecha límite</label><input id="mDue" type="date" value="${isoAdd(1)}"></div><div class="formrow"><label>Tipo</label><select id="mType"><option>gestión</option><option>docencia</option><option>diseño</option><option>evaluación</option><option>correo</option><option>documento</option><option>seguimiento</option></select></div></div>
-    <div class="actions"><button type="button" class="btn btn-outline" data-close-modal>Cancelar</button><button type="button" class="btn btn-primary" data-save-modal>Guardar</button></div>`;
+  if(type==='task') m.innerHTML='<h3>Nueva tarea</h3>'+
+    '<div class="formrow"><label>Título</label><input id="mTitle" autocomplete="off"></div>'+
+    '<div class="formrow"><label>Descripción</label><textarea id="mDesc"></textarea></div>'+
+    '<div class="formrow"><label>Proyecto</label><select id="mProject">'+po+'</select></div>'+
+    '<div class="grid grid2"><div class="formrow"><label>Estado</label><select id="mStatus"><option>pendiente</option><option>en proceso</option><option>bloqueada</option><option>terminada</option></select></div><div class="formrow"><label>Prioridad</label><select id="mPriority"><option>alta</option><option>media</option><option>baja</option></select></div></div>'+
+    '<div class="grid grid3"><div class="formrow"><label>Responsable</label><input id="mOwner" value="'+esc(ownerName)+'"></div><div class="formrow"><label>Fecha límite</label><input id="mDue" type="date" value="'+isoAdd(1)+'"></div><div class="formrow"><label>Tipo</label><select id="mType"><option>gestión</option><option>docencia</option><option>diseño</option><option>evaluación</option><option>correo</option><option>documento</option><option>seguimiento</option></select></div></div>'+
+    '<div class="actions"><button type="button" class="btn btn-outline" data-close-modal>Cancelar</button><button type="button" class="btn btn-primary" data-save-modal>Guardar</button></div>';
 
-  if(type==='meeting') m.innerHTML=`<h3>Nueva reunión</h3>
-    <div class="formrow"><label>Título</label><input id="mTitle" autocomplete="off"></div>
-    <div class="grid grid2"><div class="formrow"><label>Fecha</label><input id="mDate" type="date" value="${isoAdd(1)}"></div><div class="formrow"><label>Proyecto</label><select id="mProject">${po}</select></div></div>
-    <div class="formrow"><label>Participantes</label><input id="mPeople"></div>
-    <div class="formrow"><label>Temas</label><textarea id="mTopics"></textarea></div>
-    <div class="formrow"><label>Acuerdos / próximos pasos</label><textarea id="mAgreements"></textarea></div>
-    <div class="actions"><button type="button" class="btn btn-outline" data-close-modal>Cancelar</button><button type="button" class="btn btn-primary" data-save-modal>Guardar</button></div>`;
+  if(type==='meeting') m.innerHTML='<h3>Nueva reunión</h3>'+
+    '<div class="formrow"><label>Título</label><input id="mTitle" autocomplete="off"></div>'+
+    '<div class="grid grid2"><div class="formrow"><label>Fecha</label><input id="mDate" type="date" value="'+isoAdd(1)+'"></div><div class="formrow"><label>Proyecto</label><select id="mProject">'+po+'</select></div></div>'+
+    '<div class="formrow"><label>Participantes</label><input id="mPeople"></div>'+
+    '<div class="formrow"><label>Temas</label><textarea id="mTopics"></textarea></div>'+
+    '<div class="formrow"><label>Acuerdos</label><textarea id="mAgreements"></textarea></div>'+
+    '<div class="actions"><button type="button" class="btn btn-outline" data-close-modal>Cancelar</button><button type="button" class="btn btn-primary" data-save-modal>Guardar</button></div>';
 
-  if(type==='note') m.innerHTML=`<h3>Nueva nota</h3>
-    <div class="grid grid2"><div class="formrow"><label>Tipo</label><select id="mKind"><option>idea</option><option>decisión</option><option>acuerdo</option><option>problema</option><option>borrador</option><option>reflexión</option></select></div><div class="formrow"><label>Proyecto</label><select id="mProject">${po}</select></div></div>
-    <div class="formrow"><label>Nota</label><textarea id="mText" style="min-height:130px"></textarea></div>
-    <div class="actions"><button type="button" class="btn btn-outline" data-close-modal>Cancelar</button><button type="button" class="btn btn-primary" data-save-modal>Guardar</button></div>`;
+  if(type==='note') m.innerHTML='<h3>Nueva nota</h3>'+
+    '<div class="grid grid2"><div class="formrow"><label>Tipo</label><select id="mKind"><option>idea</option><option>decisión</option><option>acuerdo</option><option>problema</option><option>borrador</option><option>reflexión</option></select></div><div class="formrow"><label>Proyecto</label><select id="mProject">'+po+'</select></div></div>'+
+    '<div class="formrow"><label>Nota</label><textarea id="mText" style="min-height:130px"></textarea></div>'+
+    '<div class="actions"><button type="button" class="btn btn-outline" data-close-modal>Cancelar</button><button type="button" class="btn btn-primary" data-save-modal>Guardar</button></div>';
 
-  if(type==='case') m.innerHTML=`<h3>Nuevo caso específico</h3>
-    <div class="formrow"><label>Nombre del caso</label><input id="mName" placeholder="Ej: Estudiante con baja participación" autocomplete="off"></div>
-    <div class="grid grid2"><div class="formrow"><label>Tipo</label><select id="mType"><option>Estudiante</option><option>Docente</option><option>Carrera</option><option>Equipo</option><option>Jefatura</option><option>Otro</option></select></div><div class="formrow"><label>Programa / línea</label><input id="mProgram" placeholder="PACE, UTE, curso…"></div></div>
-    <div class="formrow"><label>Descripción</label><textarea id="mDesc"></textarea></div>
-    <div class="formrow"><label>Proyecto asociado</label><select id="mProject">${po}</select></div>
-    <div class="grid grid3"><div class="formrow"><label>Estado</label><select id="mStatus"><option>abierto</option><option>en seguimiento</option><option>bloqueado</option><option>cerrado</option></select></div><div class="formrow"><label>Alerta</label><select id="mAlert"><option>alta</option><option>media</option><option>baja</option></select></div><div class="formrow"><label>Fecha próxima acción</label><input id="mDue" type="date" value="${isoAdd(1)}"></div></div>
-    <div class="formrow"><label>Responsable</label><input id="mOwner" value="${esc(currentUser?.displayName?.split(' ')[0]||'Fabián')}"></div>
-    <div class="formrow"><label>Próxima acción</label><textarea id="mNext"></textarea></div>
-    <div class="formrow"><label>Historial / notas internas</label><textarea id="mHistory"></textarea></div>
-    <div class="actions"><button type="button" class="btn btn-outline" data-close-modal>Cancelar</button><button type="button" class="btn btn-primary" data-save-modal>Guardar</button></div>`;
+  if(type==='case') m.innerHTML='<h3>Nuevo caso específico</h3>'+
+    '<div class="formrow"><label>Nombre del caso</label><input id="mName" autocomplete="off"></div>'+
+    '<div class="grid grid2"><div class="formrow"><label>Tipo</label><select id="mType"><option>Estudiante</option><option>Docente</option><option>Carrera</option><option>Equipo</option><option>Jefatura</option><option>Otro</option></select></div><div class="formrow"><label>Programa</label><input id="mProgram"></div></div>'+
+    '<div class="formrow"><label>Descripción</label><textarea id="mDesc"></textarea></div>'+
+    '<div class="formrow"><label>Proyecto asociado</label><select id="mProject">'+po+'</select></div>'+
+    '<div class="grid grid3"><div class="formrow"><label>Estado</label><select id="mStatus"><option>abierto</option><option>en seguimiento</option><option>bloqueado</option><option>cerrado</option></select></div><div class="formrow"><label>Alerta</label><select id="mAlert"><option>alta</option><option>media</option><option>baja</option></select></div><div class="formrow"><label>Fecha próx. acción</label><input id="mDue" type="date" value="'+isoAdd(1)+'"></div></div>'+
+    '<div class="formrow"><label>Responsable</label><input id="mOwner" value="'+esc(ownerName)+'"></div>'+
+    '<div class="formrow"><label>Próxima acción</label><textarea id="mNext"></textarea></div>'+
+    '<div class="formrow"><label>Historial</label><textarea id="mHistory"></textarea></div>'+
+    '<div class="actions"><button type="button" class="btn btn-outline" data-close-modal>Cancelar</button><button type="button" class="btn btn-primary" data-save-modal>Guardar</button></div>';
 
-  if(type==='caseTask'){
-    const c = state.cases.find(x=>x.id===ctx)||{};
-    const sp = state.projects.map(p=>`<option value="${p.id}" ${(c.project||'')==p.id?'selected':''}>${esc(p.name)}</option>`).join('');
-    m.innerHTML=`<h3>Tarea derivada de caso</h3>
-    <div class="formrow"><label>Caso</label><input value="${esc(c.name||'Caso')}" disabled></div>
-    <div class="formrow"><label>Título</label><input id="mTitle" value="Seguimiento: ${esc(c.name||'caso')}"></div>
-    <div class="formrow"><label>Descripción</label><textarea id="mDesc">${esc(c.next||'')}</textarea></div>
-    <div class="formrow"><label>Proyecto</label><select id="mProject">${sp}</select></div>
-    <div class="grid grid3"><div class="formrow"><label>Estado</label><select id="mStatus"><option>pendiente</option><option>en proceso</option><option>bloqueada</option><option>terminada</option></select></div><div class="formrow"><label>Prioridad</label><select id="mPriority"><option ${c.alert==='alta'?'selected':''}>alta</option><option ${c.alert==='media'?'selected':''}>media</option><option ${c.alert==='baja'?'selected':''}>baja</option></select></div><div class="formrow"><label>Fecha límite</label><input id="mDue" type="date" value="${c.due||isoAdd(1)}"></div></div>
-    <div class="formrow"><label>Responsable</label><input id="mOwner" value="${esc(c.owner||currentUser?.displayName?.split(' ')[0]||'Fabián')}"></div>
-    <div class="actions"><button type="button" class="btn btn-outline" data-close-modal>Cancelar</button><button type="button" class="btn btn-primary" data-save-modal>Crear tarea</button></div>`;
+  if(type==='caseTask') {
+    var c = null;
+    for(var i=0;i<state.cases.length;i++){if(state.cases[i].id===ctx){c=state.cases[i];break;}}
+    c = c || {};
+    var sp = state.projects.map(function(p){return '<option value="'+p.id+'" '+((c.project||'')===p.id?'selected':'')+'>'+esc(p.name)+'</option>';}).join('');
+    m.innerHTML='<h3>Tarea derivada de caso</h3>'+
+      '<div class="formrow"><label>Caso</label><input value="'+esc(c.name||'Caso')+'" disabled></div>'+
+      '<div class="formrow"><label>Título</label><input id="mTitle" value="Seguimiento: '+esc(c.name||'caso')+'"></div>'+
+      '<div class="formrow"><label>Descripción</label><textarea id="mDesc">'+esc(c.next||'')+'</textarea></div>'+
+      '<div class="formrow"><label>Proyecto</label><select id="mProject">'+sp+'</select></div>'+
+      '<div class="grid grid3"><div class="formrow"><label>Estado</label><select id="mStatus"><option>pendiente</option><option>en proceso</option><option>bloqueada</option><option>terminada</option></select></div><div class="formrow"><label>Prioridad</label><select id="mPriority"><option '+(c.alert==='alta'?'selected':'')+'>alta</option><option '+(c.alert==='media'?'selected':'')+'>media</option><option '+(c.alert==='baja'?'selected':'')+'>baja</option></select></div><div class="formrow"><label>Fecha límite</label><input id="mDue" type="date" value="'+(c.due||isoAdd(1))+'"></div></div>'+
+      '<div class="formrow"><label>Responsable</label><input id="mOwner" value="'+esc(c.owner||ownerName)+'"></div>'+
+      '<div class="actions"><button type="button" class="btn btn-outline" data-close-modal>Cancelar</button><button type="button" class="btn btn-primary" data-save-modal>Crear tarea</button></div>';
   }
 
-  if(type==='user') m.innerHTML=`<h3>Invitar usuario</h3>
-    <p style="font-size:13px;color:var(--dim);margin-bottom:14px;line-height:1.6">El usuario podrá entrar con su cuenta Google desde cualquier dispositivo tan pronto guardes aquí su correo.</p>
-    <div class="formrow"><label>Nombre</label><input id="mName" placeholder="Ej: Sandra Rivera"></div>
-    <div class="formrow"><label>Correo Gmail</label><input id="mEmail" type="email" placeholder="correo@gmail.com o @uahurtado.cl"></div>
-    <div class="formrow"><label>Rol</label><select id="mRole"><option value="Admin">Admin</option><option value="Editor" selected>Editor</option><option value="Solo lectura">Solo lectura</option></select></div>
-    <div class="actions"><button type="button" class="btn btn-outline" data-close-modal>Cancelar</button><button type="button" class="btn btn-primary" data-save-modal>Agregar</button></div>`;
+  if(type==='user') m.innerHTML='<h3>Invitar usuario</h3>'+
+    '<p style="font-size:13px;color:var(--dim);margin-bottom:14px;line-height:1.6">El usuario entra con su cuenta Google tan pronto guardes su correo aquí.</p>'+
+    '<div class="formrow"><label>Nombre</label><input id="mName" placeholder="Ej: Sandra Rivera"></div>'+
+    '<div class="formrow"><label>Correo Google</label><input id="mEmail" type="email" placeholder="correo@gmail.com"></div>'+
+    '<div class="formrow"><label>Rol</label><select id="mRole"><option value="Admin">Admin</option><option value="Editor" selected>Editor</option><option value="Solo lectura">Solo lectura</option></select></div>'+
+    '<div class="actions"><button type="button" class="btn btn-outline" data-close-modal>Cancelar</button><button type="button" class="btn btn-primary" data-save-modal>Agregar</button></div>';
 
   document.getElementById('modalBg').classList.add('on');
   bindModalButtons();
 };
 
-window.closeModal = function
-window._real_closeModal = window.closeModal;(){ document.getElementById('modalBg').classList.remove('on'); };
+window.closeModal = function() { document.getElementById('modalBg').classList.remove('on'); };
 
-function saveProject(){
-  const name=val('mName'); if(!name){toast('Ponle nombre al proyecto');return;}
-  state.projects.push({id:uid(),name,desc:val('mDesc'),status:val('mStatus','activo'),priority:val('mPriority','media'),owner:val('mOwner','Fabián'),progress:Math.max(0,Math.min(100,numVal('mProgress',0)))});
+function saveProject() {
+  var name=val('mName'); if(!name){toast('Ponle nombre al proyecto');return;}
+  state.projects.push({id:uid(),name:name,desc:val('mDesc'),status:val('mStatus','activo'),priority:val('mPriority','media'),owner:val('mOwner','Fabián'),progress:Math.max(0,Math.min(100,numVal('mProgress',0)))});
   save(); closeModal(); renderAll(); toast('Proyecto creado');
 }
-function saveTask(){
+function saveTask() {
   if(!state.projects.length){toast('Primero crea un proyecto');return;}
-  const title=val('mTitle'); if(!title){toast('Ponle título a la tarea');return;}
-  state.tasks.push({id:uid(),title,desc:val('mDesc'),project:val('mProject',currentProjectId||state.projects[0]?.id||''),status:val('mStatus','pendiente'),priority:val('mPriority','media'),owner:val('mOwner','Fabián'),due:val('mDue'),type:val('mType','gestión')});
+  var title=val('mTitle'); if(!title){toast('Ponle título a la tarea');return;}
+  state.tasks.push({id:uid(),title:title,desc:val('mDesc'),project:val('mProject',currentProjectId||(state.projects[0]?state.projects[0].id:'')),status:val('mStatus','pendiente'),priority:val('mPriority','media'),owner:val('mOwner','Fabián'),due:val('mDue'),type:val('mType','gestión')});
   save(); closeModal(); renderAll(); toast('Tarea creada');
 }
-function saveMeeting(){
-  const title=val('mTitle'); if(!title){toast('Ponle título a la reunión');return;}
-  state.meetings.push({id:uid(),title,project:val('mProject',currentProjectId||state.projects[0]?.id||''),date:val('mDate'),people:val('mPeople'),topics:val('mTopics'),agreements:val('mAgreements')});
+function saveMeeting() {
+  var title=val('mTitle'); if(!title){toast('Ponle título a la reunión');return;}
+  state.meetings.push({id:uid(),title:title,project:val('mProject',currentProjectId||(state.projects[0]?state.projects[0].id:'')),date:val('mDate'),people:val('mPeople'),topics:val('mTopics'),agreements:val('mAgreements')});
   save(); closeModal(); renderAll(); toast('Reunión guardada');
 }
-function saveNote(){
-  const text=val('mText'); if(!text){toast('Escribe la nota');return;}
-  state.notes.push({id:uid(),kind:val('mKind','idea'),text,project:val('mProject',currentProjectId||state.projects[0]?.id||''),date:new Date().toISOString()});
+function saveNote() {
+  var text=val('mText'); if(!text){toast('Escribe la nota');return;}
+  state.notes.push({id:uid(),kind:val('mKind','idea'),text:text,project:val('mProject',currentProjectId||(state.projects[0]?state.projects[0].id:'')),date:new Date().toISOString()});
   save(); closeModal(); renderAll(); toast('Nota guardada');
 }
-function saveCase(){
-  const name=val('mName'); if(!name){toast('Ponle nombre al caso');return;}
-  state.cases.push({id:uid(),name,type:val('mType','Otro'),program:val('mProgram'),project:val('mProject',currentProjectId||state.projects[0]?.id||''),status:val('mStatus','abierto'),alert:val('mAlert','media'),owner:val('mOwner','Fabián'),due:val('mDue'),desc:val('mDesc'),next:val('mNext'),history:val('mHistory')});
+function saveCase() {
+  var name=val('mName'); if(!name){toast('Ponle nombre al caso');return;}
+  state.cases.push({id:uid(),name:name,type:val('mType','Otro'),program:val('mProgram'),project:val('mProject',currentProjectId||(state.projects[0]?state.projects[0].id:'')),status:val('mStatus','abierto'),alert:val('mAlert','media'),owner:val('mOwner','Fabián'),due:val('mDue'),desc:val('mDesc'),next:val('mNext'),history:val('mHistory')});
   save(); closeModal(); renderAll(); toast('Caso guardado');
 }
-function saveCaseTask(caseId){
-  const c = state.cases.find(x=>x.id===caseId);
-  const title=val('mTitle')||(c?'Seguimiento: '+c.name:'Tarea de seguimiento');
-  state.tasks.push({id:uid(),title,desc:(val('mDesc')||'')+(c?'\n\nCaso: '+c.name:''),project:val('mProject',c?.project||currentProjectId||state.projects[0]?.id||''),status:val('mStatus','pendiente'),priority:val('mPriority',c?.alert||'media'),owner:val('mOwner',c?.owner||'Fabián'),due:val('mDue'),type:'seguimiento'});
+function saveCaseTask(caseId) {
+  var c = null;
+  for(var i=0;i<state.cases.length;i++){if(state.cases[i].id===caseId){c=state.cases[i];break;}}
+  var ownerName = currentUser ? (currentUser.displayName ? currentUser.displayName.split(' ')[0] : 'Fabián') : 'Fabián';
+  var title = val('mTitle') || (c ? 'Seguimiento: '+c.name : 'Tarea de seguimiento');
+  state.tasks.push({id:uid(),title:title,desc:(val('mDesc')||'')+(c?'\n\nCaso: '+c.name:''),project:val('mProject',(c?c.project:null)||currentProjectId||(state.projects[0]?state.projects[0].id:'')),status:val('mStatus','pendiente'),priority:val('mPriority',(c?c.alert:null)||'media'),owner:val('mOwner',(c?c.owner:null)||ownerName),due:val('mDue'),type:'seguimiento'});
   if(c) c.history=(c.history||'')+'\n- '+new Date().toLocaleDateString('es-CL')+': tarea de seguimiento creada.';
   save(); closeModal(); renderAll(); toast('Tarea derivada creada');
 }
 
-window.closeCase    = function
-window._real_closeCase = window.closeCase;(id){ const c=state.cases.find(x=>x.id===id); if(!c)return; c.status=c.status==='cerrado'?'abierto':'cerrado'; save(); renderAll(); };
-window.deleteCase   = function
-window._real_deleteCase = window.deleteCase;(id){ state.cases=state.cases.filter(x=>x.id!==id); save(); renderAll(); };
-window.toggleTask   = function
-window._real_toggleTask = window.toggleTask;(id){ const t=state.tasks.find(x=>x.id===id); if(!t)return; t.status=t.status==='terminada'?'pendiente':'terminada'; save(); renderAll(); };
-window.deleteTask   = function
-window._real_deleteTask = window.deleteTask;(id){ state.tasks=state.tasks.filter(x=>x.id!==id); save(); renderAll(); };
-window.deleteMeeting= function
-window._real_deleteMeeting = window.deleteMeeting;(id){ state.meetings=state.meetings.filter(x=>x.id!==id); save(); renderAll(); };
-window.deleteNote   = function
-window._real_deleteNote = window.deleteNote;(id){ state.notes=state.notes.filter(x=>x.id!==id); save(); renderAll(); };
-window.deleteProject= function
-window._real_deleteProject = window.deleteProject;(id){
+window.closeCase    = function(id){ for(var i=0;i<state.cases.length;i++){if(state.cases[i].id===id){state.cases[i].status=state.cases[i].status==='cerrado'?'abierto':'cerrado';break;}} save(); renderAll(); };
+window.deleteCase   = function(id){ state.cases=state.cases.filter(function(x){return x.id!==id;}); save(); renderAll(); };
+window.toggleTask   = function(id){ for(var i=0;i<state.tasks.length;i++){if(state.tasks[i].id===id){state.tasks[i].status=state.tasks[i].status==='terminada'?'pendiente':'terminada';break;}} save(); renderAll(); };
+window.deleteTask   = function(id){ state.tasks=state.tasks.filter(function(x){return x.id!==id;}); save(); renderAll(); };
+window.deleteMeeting= function(id){ state.meetings=state.meetings.filter(function(x){return x.id!==id;}); save(); renderAll(); };
+window.deleteNote   = function(id){ state.notes=state.notes.filter(function(x){return x.id!==id;}); save(); renderAll(); };
+window.deleteProject= function(id){
   if(!confirm('¿Eliminar proyecto? Las tareas asociadas quedarán sin proyecto.')) return;
-  state.projects=state.projects.filter(x=>x.id!==id);
+  state.projects=state.projects.filter(function(x){return x.id!==id;});
   if(currentProjectId===id){ currentProjectId=null; document.getElementById('projectDetailView').classList.remove('on'); document.getElementById('projectListView').classList.remove('off'); }
   save(); renderAll();
 };
 
-window.generateReport = function
-window._real_generateReport = window.generateReport;(){
-  const pend=state.tasks.filter(t=>t.status!=='terminada');
-  const done=state.tasks.filter(t=>t.status==='terminada');
-  const blocked=state.tasks.filter(t=>t.status==='bloqueada');
-  const urgent=pend.filter(t=>t.priority==='alta');
-  const active=state.projects.filter(p=>p.status==='activo');
-  const openCases=state.cases.filter(c=>c.status!=='cerrado');
-  const next=state.meetings.filter(m=>m.date>=isoAdd(0)).sort((a,b)=>a.date.localeCompare(b.date)).slice(0,3);
-  document.getElementById('reportOut').textContent=`REPORTE SEMANAL · MESA DE TRABAJO\n\n1. Estado general\n- Proyectos activos: ${active.length}\n- Tareas pendientes: ${pend.length}\n- Tareas cerradas: ${done.length}\n- Tareas bloqueadas: ${blocked.length}\n- Casos abiertos: ${openCases.length}\n- Casos alerta alta: ${openCases.filter(c=>c.alert==='alta').length}\n\n2. Prioridades abiertas\n${urgent.length?urgent.map(t=>`- ${t.title} (${projName(t.project)}, ${fmt(t.due)}, ${t.owner})`).join('\n'):'Sin tareas de alta prioridad.'}\n\n3. Proyectos activos\n${active.map(p=>`- ${p.name}: ${p.progress}% · ${p.owner}`).join('\n')}\n\n4. Casos específicos\n${openCases.length?openCases.slice(0,5).map(c=>`- ${c.name}: alerta ${c.alert} · ${c.status} · próxima acción: ${c.next||'sin definir'}`).join('\n'):'Sin casos abiertos.'}\n\n5. Próximas reuniones\n${next.length?next.map(m=>`- ${fmt(m.date)} · ${m.title} · ${m.people}`).join('\n'):'Sin reuniones próximas.'}\n\n6. Bloqueos\n${blocked.length?blocked.map(t=>`- ${t.title}: ${t.desc}`).join('\n'):'Sin bloqueos.'}\n\n7. Próximos pasos\n- Cerrar tareas de alta prioridad con fecha próxima.\n- Revisar proyectos con avance menor al 50%.\n- Transformar acuerdos de reuniones en tareas concretas.`;
+window.generateReport = function() {
+  var pend=state.tasks.filter(function(t){return t.status!=='terminada';});
+  var done=state.tasks.filter(function(t){return t.status==='terminada';});
+  var blocked=state.tasks.filter(function(t){return t.status==='bloqueada';});
+  var urgent=pend.filter(function(t){return t.priority==='alta';});
+  var active=state.projects.filter(function(p){return p.status==='activo';});
+  var openCases=state.cases.filter(function(c){return c.status!=='cerrado';});
+  var next=state.meetings.filter(function(m){return m.date>=isoAdd(0);}).sort(function(a,b){return a.date.localeCompare(b.date);}).slice(0,3);
+  document.getElementById('reportOut').textContent=
+    'REPORTE SEMANAL · MESA DE TRABAJO\n\n'+
+    '1. Estado general\n- Proyectos activos: '+active.length+'\n- Tareas pendientes: '+pend.length+'\n- Tareas cerradas: '+done.length+'\n- Tareas bloqueadas: '+blocked.length+'\n- Casos abiertos: '+openCases.length+'\n\n'+
+    '2. Prioridades abiertas\n'+(urgent.length?urgent.map(function(t){return '- '+t.title+' ('+projName(t.project)+', '+fmt(t.due)+', '+t.owner+')';}).join('\n'):'Sin tareas de alta prioridad.')+'\n\n'+
+    '3. Proyectos activos\n'+active.map(function(p){return '- '+p.name+': '+p.progress+'% · '+p.owner;}).join('\n')+'\n\n'+
+    '4. Casos específicos\n'+(openCases.length?openCases.slice(0,5).map(function(c){return '- '+c.name+': alerta '+c.alert+' · '+c.status+' · '+( c.next||'sin próxima acción');}).join('\n'):'Sin casos abiertos.')+'\n\n'+
+    '5. Próximas reuniones\n'+(next.length?next.map(function(m){return '- '+fmt(m.date)+' · '+m.title+' · '+m.people;}).join('\n'):'Sin reuniones próximas.')+'\n\n'+
+    '6. Bloqueos\n'+(blocked.length?blocked.map(function(t){return '- '+t.title+': '+t.desc;}).join('\n'):'Sin bloqueos.')+'\n\n'+
+    '7. Próximos pasos\n- Cerrar tareas de alta prioridad con fecha próxima.\n- Revisar proyectos con avance menor al 50%.\n- Transformar acuerdos de reuniones en tareas concretas.';
 };
-window.copyReport = function
-window._real_copyReport = window.copyReport;(){ navigator.clipboard.writeText(document.getElementById('reportOut').textContent); toast('Reporte copiado'); };
-
-window.resetData = function
-window._real_resetData = window.resetData;(){
-  if(!confirm('¿Restablecer los datos de ejemplo? Se perderán los datos actuales.')) return;
+window.copyReport = function() { navigator.clipboard.writeText(document.getElementById('reportOut').textContent); toast('Reporte copiado'); };
+window.resetData  = function() {
+  if(!confirm('¿Restablecer datos de ejemplo?')) return;
   localStorage.removeItem('mesaTrabajoV1');
   initApp(); renderAll(); toast('Datos restablecidos');
 };
-
-window.toast = function
-window._real_toast = window.toast;(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2200); };
-
-// Señalar que el módulo está listo
-if(typeof window._moduleReady === "function") window._moduleReady();
+window.toast = function(msg) { var t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(function(){t.classList.remove('show');},2200); };
 </script>
+
 </body>
 </html>

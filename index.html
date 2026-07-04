@@ -457,13 +457,65 @@ button{cursor:pointer}
 <div class="modal-bg" id="modalBg" onclick="if(event.target===this)closeModal()"><div class="modal" id="modal"></div></div>
 <div class="toast" id="toast"></div>
 
+
+<!-- Fix móvil: interceptor de funciones para onclick inline antes de que el módulo cargue -->
+<script>
+(function(){
+  var _queue = [];
+  var _ready = false;
+  var _fns = ['navTo','openModal','closeModal','openProject','closeProjectDetail',
+    'setProjectTab','setProjectFilter','setTaskFilter','setCaseFilter',
+    'toggleTask','deleteTask','deleteProject','deleteMeeting','deleteNote',
+    'closeCase','deleteCase','generateReport','copyReport','resetData',
+    'addUserToDB','removeUserFromDB','renderAll'];
+  
+  function makeProxy(name){
+    return function(){
+      var args = Array.prototype.slice.call(arguments);
+      if(_ready && typeof window['_real_'+name] === 'function'){
+        return window['_real_'+name].apply(this, args);
+      } else {
+        _queue.push({name: name, args: args});
+      }
+    };
+  }
+  
+  _fns.forEach(function(name){
+    window[name] = makeProxy(name);
+  });
+  
+  window._moduleReady = function(){
+    _ready = true;
+    // Reasignar las funciones reales
+    _fns.forEach(function(name){
+      if(typeof window['_real_'+name] === 'function'){
+        window[name] = window['_real_'+name];
+      }
+    });
+    // Ejecutar cola
+    _queue.forEach(function(item){
+      if(typeof window[item.name] === 'function'){
+        window[item.name].apply(null, item.args);
+      }
+    });
+    _queue = [];
+  };
+})();
+</script>
 <!-- Firebase v10 modular SDK — mismo patrón que Nido de Amelia y Centro de Equipo -->
+<script type="importmap">
+{
+  "imports": {
+    "firebase/app":      "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js",
+    "firebase/auth":     "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js",
+    "firebase/database": "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js"
+  }
+}
+</script>
 <script type="module">
-import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
-import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged }
-  from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
-import { getDatabase, ref, get, set, remove, onValue }
-  from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js';
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from 'firebase/auth';
+import { getDatabase, ref, get, set, remove, onValue } from 'firebase/database';
 
 /* ── CONFIG ── */
 const firebaseConfig = {
@@ -688,7 +740,8 @@ function getWeekNumber(d){ const date=new Date(Date.UTC(d.getFullYear(),d.getMon
 window.esc = esc;
 
 /* ── RENDER ── */
-window.renderAll = function() {
+window.renderAll = function
+window._real_renderAll = window.renderAll;() {
   if (!state) return;
   renderHeader(); renderInicio(); renderProjects(); renderProjectDetail();
   renderTasks(); renderWeek(); renderCases(); renderMeetings(); renderNotes(); renderAccess();
@@ -755,19 +808,22 @@ function renderProjects(){
   }).join('') : `<div class="empty"><div class="ico">📁</div><p>No hay proyectos con este filtro.</p></div>`;
 }
 
-window.openProject = function(id){
+window.openProject = function
+window._real_openProject = window.openProject;(id){
   ensureShape(); currentProjectId=id; currentProjectTab='resumen';
   document.getElementById('projectListView').classList.add('off');
   document.getElementById('projectDetailView').classList.add('on');
   renderProjectDetail();
 };
-window.closeProjectDetail = function(){
+window.closeProjectDetail = function
+window._real_closeProjectDetail = window.closeProjectDetail;(){
   currentProjectId=null;
   document.getElementById('projectDetailView').classList.remove('on');
   document.getElementById('projectListView').classList.remove('off');
   renderProjects();
 };
-window.setProjectTab = function(tab,el){
+window.setProjectTab = function
+window._real_setProjectTab = window.setProjectTab;(tab,el){
   currentProjectTab=tab;
   document.querySelectorAll('.proj-tab').forEach(t=>t.classList.remove('active'));
   if(el) el.classList.add('active');
@@ -853,9 +909,12 @@ function pnextSteps(p,tasks,cases,meetings){
   <div class="proj-next-box"><h4>4. Preparar reunión próxima</h4><p>${meetings.filter(m=>m.date>=isoAdd(0)).length?meetings.filter(m=>m.date>=isoAdd(0)).slice(0,2).map(m=>`• ${fmt(m.date)} · ${esc(m.title)}`).join('<br>'):'Sin reuniones próximas.'}</p></div>`;
 }
 
-window.setProjectFilter = function(f,el){ projectFilter=f; el.parentElement.querySelectorAll('.pill').forEach(p=>p.classList.remove('active')); el.classList.add('active'); renderProjects(); };
-window.setTaskFilter    = function(f,el){ taskFilter=f;    el.parentElement.querySelectorAll('.pill').forEach(p=>p.classList.remove('active')); el.classList.add('active'); renderTasks(); };
-window.setCaseFilter    = function(f,el){ caseFilter=f;    el.parentElement.querySelectorAll('.pill').forEach(p=>p.classList.remove('active')); el.classList.add('active'); renderCases(); };
+window.setProjectFilter = function
+window._real_setProjectFilter = window.setProjectFilter;(f,el){ projectFilter=f; el.parentElement.querySelectorAll('.pill').forEach(p=>p.classList.remove('active')); el.classList.add('active'); renderProjects(); };
+window.setTaskFilter    = function
+window._real_setTaskFilter = window.setTaskFilter;(f,el){ taskFilter=f;    el.parentElement.querySelectorAll('.pill').forEach(p=>p.classList.remove('active')); el.classList.add('active'); renderTasks(); };
+window.setCaseFilter    = function
+window._real_setCaseFilter = window.setCaseFilter;(f,el){ caseFilter=f;    el.parentElement.querySelectorAll('.pill').forEach(p=>p.classList.remove('active')); el.classList.add('active'); renderCases(); };
 
 function renderTasks(){
   let arr = searchFilter(state.tasks,['title','desc','owner','type','status','priority']);
@@ -934,7 +993,8 @@ function renderAccess(){
 }
 
 /* ── MODAL ── */
-window.navTo = function(sec){
+window.navTo = function
+window._real_navTo = window.navTo;(sec){
   document.querySelectorAll('.sec').forEach(s=>s.classList.remove('active'));
   document.getElementById('sec-'+sec).classList.add('active');
   document.querySelectorAll('.navitem').forEach(n=>n.classList.remove('active'));
@@ -963,7 +1023,8 @@ function handleModalSave(){
   }catch(err){ console.error(err); toast('Error al guardar: '+(err?.message||'revisa los campos')); }
 }
 
-window.openModal = function(type,ctx=''){
+window.openModal = function
+window._real_openModal = window.openModal;(type,ctx=''){
   ensureShape(); modalContext={type,ctx};
   const po = state.projects.map(p=>`<option value="${p.id}" ${ctx===p.id?'selected':''}>${esc(p.name)}</option>`).join('');
   const m  = document.getElementById('modal');
@@ -1031,7 +1092,8 @@ window.openModal = function(type,ctx=''){
   bindModalButtons();
 };
 
-window.closeModal = function(){ document.getElementById('modalBg').classList.remove('on'); };
+window.closeModal = function
+window._real_closeModal = window.closeModal;(){ document.getElementById('modalBg').classList.remove('on'); };
 
 function saveProject(){
   const name=val('mName'); if(!name){toast('Ponle nombre al proyecto');return;}
@@ -1067,20 +1129,28 @@ function saveCaseTask(caseId){
   save(); closeModal(); renderAll(); toast('Tarea derivada creada');
 }
 
-window.closeCase    = function(id){ const c=state.cases.find(x=>x.id===id); if(!c)return; c.status=c.status==='cerrado'?'abierto':'cerrado'; save(); renderAll(); };
-window.deleteCase   = function(id){ state.cases=state.cases.filter(x=>x.id!==id); save(); renderAll(); };
-window.toggleTask   = function(id){ const t=state.tasks.find(x=>x.id===id); if(!t)return; t.status=t.status==='terminada'?'pendiente':'terminada'; save(); renderAll(); };
-window.deleteTask   = function(id){ state.tasks=state.tasks.filter(x=>x.id!==id); save(); renderAll(); };
-window.deleteMeeting= function(id){ state.meetings=state.meetings.filter(x=>x.id!==id); save(); renderAll(); };
-window.deleteNote   = function(id){ state.notes=state.notes.filter(x=>x.id!==id); save(); renderAll(); };
-window.deleteProject= function(id){
+window.closeCase    = function
+window._real_closeCase = window.closeCase;(id){ const c=state.cases.find(x=>x.id===id); if(!c)return; c.status=c.status==='cerrado'?'abierto':'cerrado'; save(); renderAll(); };
+window.deleteCase   = function
+window._real_deleteCase = window.deleteCase;(id){ state.cases=state.cases.filter(x=>x.id!==id); save(); renderAll(); };
+window.toggleTask   = function
+window._real_toggleTask = window.toggleTask;(id){ const t=state.tasks.find(x=>x.id===id); if(!t)return; t.status=t.status==='terminada'?'pendiente':'terminada'; save(); renderAll(); };
+window.deleteTask   = function
+window._real_deleteTask = window.deleteTask;(id){ state.tasks=state.tasks.filter(x=>x.id!==id); save(); renderAll(); };
+window.deleteMeeting= function
+window._real_deleteMeeting = window.deleteMeeting;(id){ state.meetings=state.meetings.filter(x=>x.id!==id); save(); renderAll(); };
+window.deleteNote   = function
+window._real_deleteNote = window.deleteNote;(id){ state.notes=state.notes.filter(x=>x.id!==id); save(); renderAll(); };
+window.deleteProject= function
+window._real_deleteProject = window.deleteProject;(id){
   if(!confirm('¿Eliminar proyecto? Las tareas asociadas quedarán sin proyecto.')) return;
   state.projects=state.projects.filter(x=>x.id!==id);
   if(currentProjectId===id){ currentProjectId=null; document.getElementById('projectDetailView').classList.remove('on'); document.getElementById('projectListView').classList.remove('off'); }
   save(); renderAll();
 };
 
-window.generateReport = function(){
+window.generateReport = function
+window._real_generateReport = window.generateReport;(){
   const pend=state.tasks.filter(t=>t.status!=='terminada');
   const done=state.tasks.filter(t=>t.status==='terminada');
   const blocked=state.tasks.filter(t=>t.status==='bloqueada');
@@ -1090,16 +1160,21 @@ window.generateReport = function(){
   const next=state.meetings.filter(m=>m.date>=isoAdd(0)).sort((a,b)=>a.date.localeCompare(b.date)).slice(0,3);
   document.getElementById('reportOut').textContent=`REPORTE SEMANAL · MESA DE TRABAJO\n\n1. Estado general\n- Proyectos activos: ${active.length}\n- Tareas pendientes: ${pend.length}\n- Tareas cerradas: ${done.length}\n- Tareas bloqueadas: ${blocked.length}\n- Casos abiertos: ${openCases.length}\n- Casos alerta alta: ${openCases.filter(c=>c.alert==='alta').length}\n\n2. Prioridades abiertas\n${urgent.length?urgent.map(t=>`- ${t.title} (${projName(t.project)}, ${fmt(t.due)}, ${t.owner})`).join('\n'):'Sin tareas de alta prioridad.'}\n\n3. Proyectos activos\n${active.map(p=>`- ${p.name}: ${p.progress}% · ${p.owner}`).join('\n')}\n\n4. Casos específicos\n${openCases.length?openCases.slice(0,5).map(c=>`- ${c.name}: alerta ${c.alert} · ${c.status} · próxima acción: ${c.next||'sin definir'}`).join('\n'):'Sin casos abiertos.'}\n\n5. Próximas reuniones\n${next.length?next.map(m=>`- ${fmt(m.date)} · ${m.title} · ${m.people}`).join('\n'):'Sin reuniones próximas.'}\n\n6. Bloqueos\n${blocked.length?blocked.map(t=>`- ${t.title}: ${t.desc}`).join('\n'):'Sin bloqueos.'}\n\n7. Próximos pasos\n- Cerrar tareas de alta prioridad con fecha próxima.\n- Revisar proyectos con avance menor al 50%.\n- Transformar acuerdos de reuniones en tareas concretas.`;
 };
-window.copyReport = function(){ navigator.clipboard.writeText(document.getElementById('reportOut').textContent); toast('Reporte copiado'); };
+window.copyReport = function
+window._real_copyReport = window.copyReport;(){ navigator.clipboard.writeText(document.getElementById('reportOut').textContent); toast('Reporte copiado'); };
 
-window.resetData = function(){
+window.resetData = function
+window._real_resetData = window.resetData;(){
   if(!confirm('¿Restablecer los datos de ejemplo? Se perderán los datos actuales.')) return;
   localStorage.removeItem('mesaTrabajoV1');
   initApp(); renderAll(); toast('Datos restablecidos');
 };
 
-window.toast = function(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2200); };
+window.toast = function
+window._real_toast = window.toast;(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2200); };
 
+// Señalar que el módulo está listo
+if(typeof window._moduleReady === "function") window._moduleReady();
 </script>
 </body>
 </html>

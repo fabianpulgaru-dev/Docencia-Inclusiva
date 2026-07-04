@@ -293,6 +293,9 @@ button{cursor:pointer}
     <h2 class="login-title">Mesa de Trabajo</h2>
     <p class="login-sub">Gestión académica y proyectos UTE · UAH<br>Acceso solo para el equipo autorizado</p>
     <div class="login-spinner" id="loginSpinner"></div>
+    <p id="loginSpinnerMsg" style="display:none;font-size:12px;color:rgba(255,255,255,.45);margin-bottom:14px;line-height:1.5">
+      Redirigiendo a Google…<br>Vuelves automáticamente después.
+    </p>
     <button class="g-btn" id="btnGoogleLogin">
       <svg viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.18 1.48-4.97 2.31-8.16 2.31-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/><path fill="none" d="M0 0h48v48H0z"/></svg>
       Entrar con Google
@@ -514,7 +517,7 @@ button{cursor:pointer}
 </script>
 <script type="module">
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from 'firebase/auth';
+import { getAuth, signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider, signOut, onAuthStateChanged, browserLocalPersistence, setPersistence } from 'firebase/auth';
 import { getDatabase, ref, get, set, remove, onValue } from 'firebase/database';
 
 /* ── CONFIG ── */
@@ -558,14 +561,37 @@ onAuthStateChanged(auth, async user => {
   afterLogin(user);
 });
 
-document.getElementById('btnGoogleLogin').onclick = () => {
+document.getElementById('btnGoogleLogin').onclick = async () => {
   hideLoginErr();
   showSpinner(true);
-  signInWithPopup(auth, provider).catch(err => {
+  try {
+    await setPersistence(auth, browserLocalPersistence);
+    // Safari/iOS no soporta popup — usar redirect siempre en móvil
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    if (isMobile) {
+      await signInWithRedirect(auth, provider);
+      // La página se recarga — el resultado llega en getRedirectResult abajo
+    } else {
+      await signInWithPopup(auth, provider);
+    }
+  } catch(err) {
     showSpinner(false);
     showLoginErr('No se pudo iniciar sesión: ' + (err.message || err.code));
-  });
+  }
 };
+
+// Capturar resultado del redirect al volver (móvil)
+getRedirectResult(auth).then(result => {
+  if (result && result.user) {
+    // onAuthStateChanged lo procesa automáticamente
+    console.log('Login por redirect OK:', result.user.email);
+  }
+}).catch(err => {
+  if (err.code !== 'auth/no-auth-event' && err.code !== 'auth/null-user') {
+    showLoginErr('Error al recuperar sesión: ' + (err.message || err.code));
+    showSpinner(false);
+  }
+});
 
 document.getElementById('btnLogout').onclick  = doLogout;
 document.getElementById('btnLogout2').onclick = doLogout;
@@ -641,6 +667,11 @@ function showLogin() {
 function showSpinner(on) {
   document.getElementById('loginSpinner').classList.toggle('on', on);
   document.getElementById('btnGoogleLogin').style.display = on ? 'none' : '';
+  const msg = document.getElementById('loginSpinnerMsg');
+  if (msg) {
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    msg.style.display = (on && isMobile) ? 'block' : 'none';
+  }
 }
 function showLoginErr(msg) {
   const el = document.getElementById('loginErr');

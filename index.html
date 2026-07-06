@@ -163,7 +163,7 @@ button{cursor:pointer}
 
 <div class="app">
   <div class="topbar">
-    <div class="brand"><span class="star">✦</span>Mesa de Trabajo <small>gestión académica y proyectos · v10 OCR ajustes razonables</small></div>
+    <div class="brand"><span class="star">✦</span>Mesa de Trabajo <small>gestión académica y proyectos · v11 lector cartas UAH</small></div>
     <div class="top-actions">
       <input class="search" id="globalSearch" placeholder="Buscar tareas, proyectos, notas…" oninput="renderAll()">
       <div class="sync-pill local" id="syncStatus">Local</div><div class="userchip"><div class="avatar" id="userAvatar">FP</div><span id="userLabel">Fabián · Admin</span></div><button class="btn btn-ghost btn-sm" id="logoutBtn" onclick="logoutFirebase()" style="display:none">Salir</button>
@@ -266,9 +266,9 @@ button{cursor:pointer}
           <div class="stat"><div class="n" id="arOpen">0</div><div class="l">casos abiertos</div></div>
         <div class="ocr-panel">
           <h3>📄 Importar cartas de ajustes con OCR</h3>
-          <p>Sube una o varias cartas PDF/JPG/PNG. El sistema intentará leer el texto y crear casos de Ajustes Razonables automáticamente. Después revisa cada caso antes de usarlo oficialmente.</p>
+          <p>Sube una o varias cartas PDF, Word/JPG/PNG. El sistema leerá el formato estándar UAH por secciones y creará casos de Ajustes Razonables automáticamente. Después revisa cada caso antes de usarlo oficialmente.</p>
           <div class="ocr-actions">
-            <input id="ocrFiles" type="file" multiple accept=".pdf,.jpg,.jpeg,.png">
+            <input id="ocrFiles" type="file" multiple accept=".pdf,.doc,.docx,.jpg,.jpeg,.png">
             <button class="btn btn-primary btn-sm" onclick="importarCartasAjustesOCR()">Leer cartas y crear casos</button>
             <button class="btn btn-outline btn-sm" onclick="limpiarOCRLog()">Limpiar registro</button>
           </div>
@@ -329,6 +329,7 @@ button{cursor:pointer}
 <!-- OCR / PDF para importación de cartas de ajustes -->
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js"></script>
 
 <script>
 const $=id=>document.getElementById(id);
@@ -1866,6 +1867,271 @@ renderReasonableCard=function(r){
   </div>
  </div>`;
 };
+
+
+/* === v11: parser específico para Cartas de Ajustes Razonables UAH === */
+function normCartaText(t){
+  return String(t||'')
+    .replace(/\r/g,'\n')
+    .replace(/\u00a0/g,' ')
+    .replace(/[ \t]+/g,' ')
+    .replace(/\n{3,}/g,'\n\n')
+    .trim();
+}
+function cleanCarta(s){
+  return String(s||'').replace(/\s+\n/g,'\n').replace(/\n\s+/g,'\n').replace(/[ \t]{2,}/g,' ').trim();
+}
+function extractBetween(text, startRegex, endRegexes=[]){
+  const t=String(text||'');
+  const start=t.search(startRegex);
+  if(start<0)return '';
+  const after=t.slice(start).replace(startRegex,'');
+  let end=after.length;
+  for(const er of endRegexes){
+    const idx=after.search(er);
+    if(idx>=0) end=Math.min(end,idx);
+  }
+  return cleanCarta(after.slice(0,end));
+}
+function firstMatch(text, regex, group=1){
+  const m=String(text||'').match(regex);
+  return m ? cleanCarta(m[group]||'') : '';
+}
+function parseSeccionesAjustesUAH(text){
+  const t=normCartaText(text);
+  const starts=[
+    {key:'evaluativas', title:'Adecuaciones en situaciones evaluativas', re:/1\.\s*Adecuaciones en situaciones evaluativas/i},
+    {key:'acceso', title:'Adecuación de acceso a la información', re:/2\.\s*Adecuaci[oó]n de acceso a la informaci[oó]n/i},
+    {key:'participacion', title:'Adecuaciones para la participación', re:/3\.\s*Adecuaciones para la participaci[oó]n/i},
+    {key:'infraestructura', title:'Adecuaciones de infraestructura', re:/4\.\s*Adecuaciones de infraestructura/i}
+  ];
+  const found=starts.map(s=>({...s, idx:t.search(s.re)})).filter(s=>s.idx>=0).sort((a,b)=>a.idx-b.idx);
+  const sections={};
+  for(let i=0;i<found.length;i++){
+    const cur=found[i], next=found[i+1];
+    let chunk=t.slice(cur.idx, next?next.idx:t.length);
+    chunk=chunk.replace(cur.re,'').trim();
+    chunk=chunk.replace(/La Unidad de Trayectoria Estudiantil[\s\S]*$/i,'').trim();
+    sections[cur.key]=cleanCarta(chunk);
+  }
+  return sections;
+}
+function formatAjustesSections(sections){
+  const labels={
+    evaluativas:'1. Adecuaciones en situaciones evaluativas',
+    acceso:'2. Adecuación de acceso a la información',
+    participacion:'3. Adecuaciones para la participación',
+    infraestructura:'4. Adecuaciones de infraestructura'
+  };
+  return Object.entries(labels)
+    .filter(([k])=>sections[k])
+    .map(([k,l])=>`${l}\n${sections[k]}`)
+    .join('\n\n');
+}
+function tasksFromAjustesSections(sections, fileName='carta'){
+  const tasks=[{
+    id:uid(),
+    title:'Validar datos importados desde carta de ajustes',
+    desc:'Revisar campos extraídos automáticamente desde '+fileName,
+    owner:'Fabián',
+    due:isoAdd(1),
+    done:false
+  }];
+  if(sections.evaluativas) tasks.push({
+    id:uid(),
+    title:'Coordinar adecuaciones evaluativas',
+    desc:sections.evaluativas.slice(0,900),
+    owner:'Fabián',
+    due:isoAdd(3),
+    done:false
+  });
+  if(sections.acceso) tasks.push({
+    id:uid(),
+    title:'Coordinar acceso a información/materiales',
+    desc:sections.acceso.slice(0,900),
+    owner:'Fabián',
+    due:isoAdd(3),
+    done:false
+  });
+  if(sections.participacion) tasks.push({
+    id:uid(),
+    title:'Coordinar adecuaciones de participación',
+    desc:sections.participacion.slice(0,900),
+    owner:'Fabián',
+    due:isoAdd(3),
+    done:false
+  });
+  if(sections.infraestructura && !/no requiere/i.test(sections.infraestructura)) tasks.push({
+    id:uid(),
+    title:'Revisar adecuaciones de infraestructura',
+    desc:sections.infraestructura.slice(0,900),
+    owner:'Fabián',
+    due:isoAdd(3),
+    done:false
+  });
+  return tasks;
+}
+
+
+function extraerDatosCartaAjustes(text){
+  const raw=normCartaText(text);
+  const clean=s=>cleanCarta(s);
+
+  const fecha=firstMatch(raw,/Santiago,\s*([^\n]+)/i);
+  const studentHeader=firstMatch(raw,/Carta de Ajustes Razonables\s*Estudiante\s+([^\n]+)/i);
+  const studentInline=firstMatch(raw,/estudiante\s+([A-ZÁÉÍÓÚÑ][A-Za-zÁÉÍÓÚÑáéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][A-Za-zÁÉÍÓÚÑáéíóúñ]+){1,5})\s+RUT/i);
+  const student=studentHeader || studentInline || 'Estudiante sin identificar';
+
+  const career=firstMatch(raw,/comunica a la carrera de\s+(.+?)\s+que la estudiante/i);
+  const rut=firstMatch(raw,/\bRUT\s+(\d{1,2}\.?\d{3}\.?\d{3}-[\dkK])\b/i);
+  // Evitar llenar correo del estudiante con correo de soporte institucional si no está rotulado como correo del/la estudiante.
+  const emailStudent=firstMatch(raw,/(?:correo(?: electrónico)?(?: estudiante)?|email(?: estudiante)?)\s*[:\-]\s*([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})/i);
+  const phone=firstMatch(raw,/(?:tel[eé]fono|celular|fono)\s*[:\-]\s*((?:\+?56\s*)?(?:\(?9\)?\s*)?[\d\s.-]{8,14})/i);
+
+  const antecedentes=extractBetween(raw,/Antecedentes entregados por la estudiante/i,[
+    /Ajustes razonables\s+\d|Ajustes razonables/i,
+    /1\.\s*Adecuaciones/i
+  ]);
+
+  const sections=parseSeccionesAjustesUAH(raw);
+  const ajustes=formatAjustesSections(sections);
+  const soporte=firstMatch(raw,/comun[ií]quese con\s+(.+?)\s+al correo\s+([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})/i,0);
+
+  const obs=[
+    fecha ? 'Fecha carta: '+fecha : '',
+    soporte ? 'Contacto de soporte indicado en carta: '+soporte : '',
+    'Texto importado con parser UAH por secciones.'
+  ].filter(Boolean).join('\n');
+
+  return {
+    student: clean(student),
+    studentId: clean(rut),
+    email: clean(emailStudent),
+    phone: clean(phone),
+    career: clean(career),
+    diagnosis: clean(antecedentes),
+    adjustments: clean(ajustes),
+    obs: clean(obs),
+    next:'Validar carta importada, comunicar ajustes a carrera/docentes y monitorear implementación.',
+    rawText: raw,
+    sections
+  };
+}
+
+async function leerCartaDOCX(file){
+  if(typeof mammoth==='undefined') throw new Error('Mammoth no cargó para leer Word');
+  const arrayBuffer=await file.arrayBuffer();
+  const result=await mammoth.extractRawText({arrayBuffer});
+  return result?.value||'';
+}
+
+async function ocrPdfFile(file, progressBase=0, progressSpan=100){
+  if(!window.pdfjsLib) throw new Error('PDF.js no cargó');
+  pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  const buf=await file.arrayBuffer();
+  const pdf=await pdfjsLib.getDocument({data:buf}).promise;
+  let full='';
+  const maxPages=pdf.numPages;
+  for(let p=1;p<=maxPages;p++){
+    setOCRLog(`Página ${p}/${pdf.numPages}: leyendo texto embebido…`);
+    const page=await pdf.getPage(p);
+    const textContent=await page.getTextContent().catch(()=>null);
+    const embedded=textContent?.items?.map(i=>i.str).join(' ')||'';
+    if(embedded.trim().length>80){
+      full += '\n' + embedded;
+      setOCRBar(progressBase + (p/maxPages)*progressSpan);
+    }else{
+      setOCRLog(`Página ${p}: sin texto suficiente, aplicando OCR…`);
+      const viewport=page.getViewport({scale:1.7});
+      const canvas=document.createElement('canvas');
+      const ctx=canvas.getContext('2d');
+      canvas.width=viewport.width; canvas.height=viewport.height;
+      await page.render({canvasContext:ctx,viewport}).promise;
+      const blob=await new Promise(res=>canvas.toBlob(res,'image/png'));
+      const pageText=await ocrImageFile(blob, progressBase + ((p-1)/maxPages)*progressSpan, progressSpan/maxPages);
+      full += '\n' + pageText;
+    }
+  }
+  return full;
+}
+
+async function leerCartaOCR(file, index, total){
+  const base=(index/total)*100, span=100/total;
+  setOCRLog(`Procesando ${index+1}/${total}: ${file.name}`);
+  const ext=file.name.toLowerCase();
+  if(ext.endsWith('.docx') || ext.endsWith('.doc')) {
+    setOCRLog('Leyendo Word directamente por texto estructurado…');
+    setOCRBar(base + span*.45);
+    const text=await leerCartaDOCX(file);
+    setOCRBar(base + span);
+    return text;
+  }
+  if(ext.endsWith('.pdf')) return await ocrPdfFile(file, base, span);
+  if(/\.(jpg|jpeg|png)$/i.test(ext)) return await ocrImageFile(file, base, span);
+  throw new Error('Formato no soportado para importación: '+file.name);
+}
+
+async function importarCartasAjustesOCR(){
+  ensureStateShape();
+  const files=[...($('ocrFiles')?.files||[])];
+  if(!files.length){toast('Selecciona una o más cartas primero');return}
+  setOCRLog('Iniciando importación con parser UAH…',false);
+  setOCRBar(0);
+  let creados=0;
+  for(let i=0;i<files.length;i++){
+    try{
+      const file=files[i];
+      const text=await leerCartaOCR(file,i,files.length);
+      const d=extraerDatosCartaAjustes(text);
+      const caso={
+        id:uid(),
+        student:d.student||file.name.replace(/\.[^.]+$/,''),
+        studentId:d.studentId||'',
+        email:d.email||'',
+        phone:d.phone||'',
+        career:d.career||'',
+        course:'',
+        status:'abierto',
+        priority:'alta',
+        owner:'Fabián',
+        diagnosis:d.diagnosis||'',
+        adjustments:d.adjustments||'',
+        obs:(d.obs||'')+'\n\nTexto fuente conservado parcialmente:\n'+(d.rawText||'').slice(0,1200),
+        next:d.next,
+        due:isoAdd(2),
+        tags:'parser UAH, carta de ajustes',
+        tasks:tasksFromAjustesSections(d.sections||{}, file.name),
+        docs:[],
+        createdAt:new Date().toISOString(),
+        updatedAt:new Date().toISOString()
+      };
+      state.reasonable.push(caso);
+
+      if(cloudReady&&fbStorage&&fbUser){
+        try{
+          const path=docsPath(file.name);
+          await fbStorage.ref(path).put(file,{contentType:file.type||'application/octet-stream'});
+          const url=await fbStorage.ref(path).getDownloadURL();
+          caso.docs.push({id:uid(),name:'Carta original',type:file.type||'archivo',fileName:file.name,size:file.size,downloadURL:url,storagePath:path,desc:'Archivo original importado con parser UAH',date:new Date().toISOString()});
+        }catch(e){console.error(e); setOCRLog('No se pudo subir archivo original a Storage: '+file.name);}
+      }else if(file.size<4.5*1024*1024){
+        const dataUrl=await fileToDataURL(file);
+        caso.docs.push({id:uid(),name:'Carta original',type:file.type||'archivo',fileName:file.name,size:file.size,dataUrl,desc:'Archivo original importado con parser UAH',date:new Date().toISOString()});
+      }
+
+      creados++;
+      setOCRLog(`✓ Caso creado: ${caso.student}`);
+      setOCRLog(`  Carrera: ${caso.career||'sin detectar'} · RUT/ID: ${caso.studentId||'sin detectar'} · Tareas: ${caso.tasks.length}`);
+      save();
+      renderAll();
+    }catch(err){
+      console.error(err);
+      setOCRLog(`✕ Error con ${files[i].name}: ${err.message||err}`);
+    }
+  }
+  setOCRBar(100);
+  toast(`Importación terminada: ${creados} caso(s) creado(s)`);
+}
 
 bootFirebaseAuth();
 renderAll();

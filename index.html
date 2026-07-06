@@ -163,7 +163,7 @@ button{cursor:pointer}
 
 <div class="app">
   <div class="topbar">
-    <div class="brand"><span class="star">✦</span>Mesa de Trabajo <small>gestión académica y proyectos · v11 lector cartas UAH</small></div>
+    <div class="brand"><span class="star">✦</span>Mesa de Trabajo <small>gestión académica y proyectos · v12 síntesis cartas UAH</small></div>
     <div class="top-actions">
       <input class="search" id="globalSearch" placeholder="Buscar tareas, proyectos, notas…" oninput="renderAll()">
       <div class="sync-pill local" id="syncStatus">Local</div><div class="userchip"><div class="avatar" id="userAvatar">FP</div><span id="userLabel">Fabián · Admin</span></div><button class="btn btn-ghost btn-sm" id="logoutBtn" onclick="logoutFirebase()" style="display:none">Salir</button>
@@ -2096,7 +2096,7 @@ async function importarCartasAjustesOCR(){
         owner:'Fabián',
         diagnosis:d.diagnosis||'',
         adjustments:d.adjustments||'',
-        obs:(d.obs||'')+'\n\nTexto fuente conservado parcialmente:\n'+(d.rawText||'').slice(0,1200),
+        obs:d.obs||'',
         next:d.next,
         due:isoAdd(2),
         tags:'parser UAH, carta de ajustes',
@@ -2122,6 +2122,7 @@ async function importarCartasAjustesOCR(){
       creados++;
       setOCRLog(`✓ Caso creado: ${caso.student}`);
       setOCRLog(`  Carrera: ${caso.career||'sin detectar'} · RUT/ID: ${caso.studentId||'sin detectar'} · Tareas: ${caso.tasks.length}`);
+      setOCRLog(resumenBreveCartaUAH(d));
       save();
       renderAll();
     }catch(err){
@@ -2131,6 +2132,90 @@ async function importarCartasAjustesOCR(){
   }
   setOCRBar(100);
   toast(`Importación terminada: ${creados} caso(s) creado(s)`);
+}
+
+
+/* === v12: síntesis ejecutiva de cartas UAH === */
+function sentenceSplit(txt){
+  return String(txt||'')
+    .replace(/\n+/g,' ')
+    .split(/(?<=[.!?])\s+/)
+    .map(s=>s.trim())
+    .filter(Boolean);
+}
+function pickFirstSentences(txt, max=2){
+  return sentenceSplit(txt).slice(0,max).join(' ');
+}
+function compactDiagnosis(antecedentes){
+  const t=String(antecedentes||'');
+  if(!t.trim()) return 'Sin diagnóstico/antecedente registrado.';
+  const diagLine=(t.match(/Diagn[oó]stico\s+de\s+([^.\n]+)/i)||[])[1];
+  if(diagLine) return cleanCarta(diagLine).replace(/^de\s+/i,'');
+  // fallback: buscar frases típicas antes de explicar consecuencias
+  const first=pickFirstSentences(t,1);
+  return first.length>220 ? first.slice(0,220).trim()+'…' : first;
+}
+function compactSection(sectionText, fallback){
+  const t=String(sectionText||'').trim();
+  if(!t) return '';
+  if(/no requiere/i.test(t)) return 'No requiere.';
+  const first=pickFirstSentences(t,1);
+  let s=first
+    .replace(/^Se solicita que\s+/i,'')
+    .replace(/^Se solicita\s+/i,'')
+    .replace(/^En lo posible,\s*/i,'')
+    .replace(/^Considerar\s+/i,'Considerar ')
+    .trim();
+  if(s.length>150) s=s.slice(0,150).trim()+'…';
+  return s || fallback;
+}
+function compactAdjustments(sections){
+  sections=sections||{};
+  const items=[];
+  if(sections.evaluativas) items.push('Evaluación: '+compactSection(sections.evaluativas));
+  if(sections.acceso) items.push('Acceso: '+compactSection(sections.acceso));
+  if(sections.participacion) items.push('Participación: '+compactSection(sections.participacion));
+  if(sections.infraestructura) items.push('Infraestructura: '+compactSection(sections.infraestructura));
+  return items.length ? items.map((x,i)=>`${i+1}) ${x}`).join(' ') : 'Sin ajustes detectados.';
+}
+function compactNextFromSections(sections){
+  const tasks=[];
+  if(sections.evaluativas) tasks.push('informar adecuaciones evaluativas');
+  if(sections.acceso) tasks.push('coordinar condiciones de acceso/materiales');
+  if(sections.participacion) tasks.push('socializar apoyos de participación');
+  if(sections.infraestructura && !/no requiere/i.test(sections.infraestructura)) tasks.push('revisar infraestructura');
+  return tasks.length ? 'Validar carta y '+tasks.join('; ')+'.' : 'Validar carta importada y monitorear implementación.';
+}
+
+const extraerDatosCartaAjustesV11 = extraerDatosCartaAjustes;
+extraerDatosCartaAjustes=function(text){
+  const d=extraerDatosCartaAjustesV11(text);
+  const sections=d.sections||parseSeccionesAjustesUAH(d.rawText||text);
+  d.diagnosisLong=d.diagnosis||'';
+  d.adjustmentsLong=d.adjustments||'';
+  d.diagnosis=compactDiagnosis(d.diagnosisLong);
+  d.adjustments=compactAdjustments(sections);
+  d.next=compactNextFromSections(sections);
+  d.obs=[
+    d.obs||'',
+    '',
+    'Detalle completo importado:',
+    'ANTECEDENTES:',
+    d.diagnosisLong||'Sin antecedentes extensos.',
+    '',
+    'AJUSTES COMPLETOS:',
+    d.adjustmentsLong||'Sin ajustes extensos.'
+  ].join('\n').trim();
+  d.sections=sections;
+  return d;
+};
+
+function resumenBreveCartaUAH(d){
+  return [
+    `Diagnóstico: ${d.diagnosis||'sin detectar'}`,
+    `Ajustes: ${d.adjustments||'sin detectar'}`,
+    d.next ? `Próxima acción: ${d.next}` : ''
+  ].filter(Boolean).join('\n');
 }
 
 bootFirebaseAuth();

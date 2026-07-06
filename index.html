@@ -109,7 +109,7 @@ button{cursor:pointer}
 <body>
 <div class="app">
   <div class="topbar">
-    <div class="brand"><span class="star">✦</span>Mesa de Trabajo <small>gestión académica y proyectos · v5 editable + ajustes razonables</small></div>
+    <div class="brand"><span class="star">✦</span>Mesa de Trabajo <small>gestión académica y proyectos · v6 casos emergentes + archivos</small></div>
     <div class="top-actions">
       <input class="search" id="globalSearch" placeholder="Buscar tareas, proyectos, notas…" oninput="renderAll()">
       <div class="userchip"><div class="avatar">FP</div><span>Fabián · Admin</span></div>
@@ -186,7 +186,7 @@ button{cursor:pointer}
       </section>
       <section class="sec" id="sec-casos">
         <div class="sec-hd">
-          <div><h2>Casos específicos</h2><p>Seguimiento de estudiantes, docentes, carreras o situaciones puntuales que requieren continuidad.</p></div>
+          <div><h2>Casos específicos</h2><p>Seguimiento propio de casos específicos: ficha, tareas, próxima acción, historial y monitoreo.</p></div>
           <button class="btn btn-primary" onclick="openModal('case')">+ Caso</button>
         </div>
         <div class="filters">
@@ -934,6 +934,225 @@ projectTaskList=function(items){return items.length?items.map(t=>`<div class="ta
 
 projectCaseCard=function(c){return `<div class="case-card alerta-${esc(c.alert)}"><div class="case-top"><div><div class="case-name">${esc(c.name)}</div><div class="case-type">${esc(c.type)} · ${esc(c.program||'Sin programa')}</div></div><div class="item-actions"><button class="btn btn-ghost btn-sm" onclick="openModal('edit:case','${c.id}')">✏️</button><button class="btn btn-ghost btn-sm" onclick="deleteCase('${c.id}')">✕</button></div></div><div class="case-desc">${esc(c.desc||'')}</div><div class="case-meta"><span class="tag ${tagClass(c.alert)}">alerta ${esc(c.alert)}</span><span class="tag tag-olive">${esc(c.status)}</span><span class="tag tag-gold">${fmt(c.due)}</span><span class="tag tag-rose">${esc(c.owner)}</span></div><div class="case-next"><b>Próxima acción</b><span>${esc(c.next||'Sin próxima acción definida.')}</span></div></div>`};
 
+
+
+/* === MEJORAS v6: casos específicos con ficha emergente y archivos reales en Ajustes Razonables === */
+let detailContext={type:null,id:null};
+
+function humanFileSize(bytes){
+  bytes=Number(bytes||0);
+  if(bytes<1024)return bytes+' B';
+  if(bytes<1024*1024)return (bytes/1024).toFixed(1)+' KB';
+  return (bytes/1024/1024).toFixed(1)+' MB';
+}
+function fileToDataURL(file){
+  return new Promise((resolve,reject)=>{
+    const reader=new FileReader();
+    reader.onload=()=>resolve(reader.result);
+    reader.onerror=reject;
+    reader.readAsDataURL(file);
+  });
+}
+function caseTasks(caseId){
+  const c=(state.cases||[]).find(c=>c.id===caseId);
+  const marker='Caso asociado: '+(c?.name||'__NO__');
+  return (state.tasks||[]).filter(t=>t.caseId===caseId || String(t.desc||'').includes(marker));
+}
+function openCaseDetail(id){
+  ensureStateShape();
+  const c=(state.cases||[]).find(x=>x.id===id);
+  if(!c){toast('No encontré el caso');return}
+  detailContext={type:'case',id};
+  const relatedTasks=caseTasks(id);
+  const pending=relatedTasks.filter(t=>t.status!=='terminada');
+  const done=relatedTasks.filter(t=>t.status==='terminada');
+  const modal=$('modal');
+  modal.classList.add('detail-modal');
+  modal.innerHTML=`<div class="case-detail-head">
+    <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start">
+      <div>
+        <h3>${esc(c.name)}</h3>
+        <p>${esc(c.type)} · ${esc(c.program||'Sin programa')} · Responsable: ${esc(c.owner||'')}</p>
+        <div class="case-meta" style="margin-top:10px">
+          <span class="tag ${tagClass(c.alert)}">alerta ${esc(c.alert)}</span>
+          <span class="tag tag-olive">${esc(c.status)}</span>
+          <span class="tag tag-gold">${fmt(c.due)}</span>
+        </div>
+      </div>
+      <div class="item-actions">
+        <button class="btn btn-outline btn-sm" style="border-color:rgba(255,255,255,.35);color:white" onclick="openModal('edit:case','${c.id}')">✏️ Editar ficha</button>
+        <button class="btn btn-outline btn-sm" style="border-color:rgba(255,255,255,.35);color:white" onclick="closeModal()">Cerrar</button>
+      </div>
+    </div>
+  </div>
+  <div class="case-detail-grid">
+    <div class="case-detail-card">
+      <h4>Resumen del caso</h4>
+      <p style="font-size:13px;line-height:1.7;color:var(--ink2)">${esc(c.desc||'Sin descripción registrada.')}</p>
+      <div class="case-next" style="margin-top:12px"><b>Próxima acción</b><span>${esc(c.next||'Sin próxima acción definida.')}</span></div>
+      <div class="case-history" style="margin-top:12px"><b>Historial:</b><br>${esc(c.history||'Sin historial registrado.')}</div>
+    </div>
+    <div class="case-detail-card">
+      <h4>Estado operativo</h4>
+      <div class="grid grid3">
+        <div class="stat"><div class="n">${relatedTasks.length}</div><div class="l">tareas</div></div>
+        <div class="stat"><div class="n">${pending.length}</div><div class="l">pendientes</div></div>
+        <div class="stat"><div class="n">${done.length}</div><div class="l">cumplidas</div></div>
+      </div>
+      <div style="margin-top:10px" class="item-actions">
+        <button class="btn btn-primary btn-sm" onclick="openModal('caseTask','${c.id}')">+ Tarea</button>
+        <button class="btn btn-outline btn-sm" onclick="closeCase('${c.id}');openCaseDetail('${c.id}')">${c.status==='cerrado'?'Reabrir':'Cerrar caso'}</button>
+      </div>
+    </div>
+    <div class="case-detail-card">
+      <h4>Tareas vinculadas</h4>
+      ${relatedTasks.length?relatedTasks.map(t=>`<div class="case-task-row">
+        <div class="case-task-check ${t.status==='terminada'?'done':''}" onclick="toggleTask('${t.id}');openCaseDetail('${c.id}')"></div>
+        <div style="flex:1">
+          <div class="task-title ${t.status==='terminada'?'done':''}">${esc(t.title)}</div>
+          <div class="task-desc">${esc(t.desc||'')}${renderLinksFromText((t.desc||'')+' '+(t.links||''))}</div>
+          <div class="task-meta"><span class="tag ${tagClass(t.priority)}">${esc(t.priority)}</span><span class="tag tag-olive">${esc(t.status)}</span><span class="tag tag-gold">${fmt(t.due)}</span><span class="tag tag-rose">${esc(t.owner)}</span></div>
+        </div>
+        <div class="item-actions"><button class="btn btn-ghost btn-sm" onclick="openModal('edit:task','${t.id}')">✏️</button><button class="btn btn-ghost btn-sm" onclick="deleteTask('${t.id}');openCaseDetail('${c.id}')">✕</button></div>
+      </div>`).join(''):'<div class="empty"><p>No hay tareas vinculadas todavía.</p></div>'}
+    </div>
+    <div class="case-detail-card">
+      <h4>Monitoreo rápido</h4>
+      <div class="manual-hint">Este caso se crea, edita y monitorea desde <b>Casos específicos</b>. Ya no depende de la pestaña Proyectos.</div>
+      <button class="btn btn-outline btn-sm" onclick="openModal('edit:case','${c.id}')" style="margin-top:10px">Editar datos, historial y próxima acción</button>
+    </div>
+  </div>`;
+  $('modalBg').classList.add('on');
+}
+
+const oldCloseModalV6=closeModal;
+closeModal=function(){
+  const m=$('modal');
+  if(m)m.classList.remove('detail-modal');
+  oldCloseModalV6();
+};
+
+saveCaseTask=function(caseId){
+ ensureStateShape();
+ const c=(state.cases||[]).find(x=>x.id===caseId);
+ const title=val('mTitle') || (c?'Seguimiento: '+c.name:'Tarea de seguimiento');
+ state.tasks.push({id:uid(),title,desc:(val('mDesc')||'')+(c?'\n\nCaso asociado: '+c.name:''),caseId:caseId,project:'',status:val('mStatus','pendiente'),priority:val('mPriority',c?.alert||'media'),owner:val('mOwner',c?.owner||'Fabián'),due:val('mDue'),type:'seguimiento'});
+ if(c){c.history=(c.history||'')+'\n- '+new Date().toLocaleDateString('es-CL')+': se creó una tarea de seguimiento.'}
+ save(); closeModal(); renderAll(); toast('Tarea derivada creada');
+ setTimeout(()=>openCaseDetail(caseId),80);
+};
+
+renderCases=function(){
+ let arr=searchFilter(state.cases||[],['name','type','program','status','alert','owner','desc','next','history']);
+ if(caseFilter!=='todos')arr=arr.filter(c=>['abierto','en seguimiento','bloqueado','cerrado'].includes(caseFilter)?c.status===caseFilter:c.alert===caseFilter);
+ arr.sort((a,b)=>({alta:0,media:1,baja:2}[a.alert]??3)-({alta:0,media:1,baja:2}[b.alert]??3)||(a.due||'').localeCompare(b.due||''));
+ $('caseGrid').innerHTML=arr.length?arr.map(c=>`<div class="case-card case-click alerta-${esc(c.alert)}" onclick="openCaseDetail('${c.id}')">
+   <div class="case-top">
+     <div><div class="case-name">${esc(c.name)}</div><div class="case-type">${esc(c.type)} · ${esc(c.program||'Sin programa')}</div></div>
+     <span class="tag ${tagClass(c.alert)}">alerta ${esc(c.alert)}</span>
+   </div>
+   <div class="case-desc">${esc(c.desc||'')}</div>
+   <div class="case-meta">
+     <span class="tag tag-olive">${esc(c.status)}</span>
+     <span class="tag tag-gold">${fmt(c.due)}</span>
+     <span class="tag tag-rose">${esc(c.owner)}</span>
+     <span class="tag tag-blue">${caseTasks(c.id).filter(t=>t.status!=='terminada').length} tareas pendientes</span>
+   </div>
+   <div class="case-next"><b>Próxima acción</b><span>${esc(c.next||'Sin próxima acción definida.')}</span></div>
+   <div class="case-history"><b>Historial:</b> ${esc(c.history||'Sin historial registrado.')}</div>
+   <div class="item-actions" style="margin-top:8px">
+     <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();openModal('caseTask','${c.id}')">+ Tarea</button>
+     <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();openModal('edit:case','${c.id}')">✏️ Editar</button>
+     <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();closeCase('${c.id}')">${c.status==='cerrado'?'Reabrir':'Cerrar'}</button>
+     <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();deleteCase('${c.id}')">✕</button>
+   </div>
+ </div>`).join(''):`<div class="empty"><div class="ico">🎯</div><p>No hay casos específicos registrados.</p></div>`;
+};
+
+const oldRenderProjectDetailV6=renderProjectDetail;
+renderProjectDetail=function(){
+ oldRenderProjectDetailV6();
+ const box=$('projectDetailView');
+ if(!box||!currentProjectId)return;
+ box.querySelectorAll('.proj-tab').forEach(btn=>{
+   if((btn.textContent||'').trim()==='Casos') btn.style.display='none';
+ });
+ const panels=box.querySelectorAll('.proj-panel');
+ if(panels[2]){
+   panels[2].innerHTML='<div class="proj-empty">Los casos específicos se crean, editan y monitorean exclusivamente desde la pestaña <b>Casos específicos</b>.</div>';
+ }
+};
+
+const oldOpenModalV6=openModal;
+openModal=function(type,ctx=''){
+ if(type==='arDoc' || type==='edit:arDoc'){
+   const editId=type==='edit:arDoc'?ctx:null;
+   const caseId=type==='edit:arDoc'?modalContext.ctx:ctx;
+   editingItem={type:type==='edit:arDoc'?'arDoc':null,id:editId};
+   modalContext={type:'arDoc',ctx:caseId};
+   const r=state.reasonable.find(x=>x.id===caseId);
+   const doc=editId?(r?.docs||[]).find(x=>x.id===editId):null;
+   const m=$('modal');
+   m.innerHTML=`<h3>${doc?'Editar':'Subir'} documento</h3>
+     <div class="formrow"><label>Caso</label><input value="${esc(r?.student||'Caso')}" disabled></div>
+     <div class="formrow"><label>Nombre del documento</label><input id="mName" value="${esc(doc?.name||'')}" placeholder="Ej: diagnóstico, certificado, informe, pauta"></div>
+     <div class="formrow"><label>Tipo</label><select id="mType"><option value="PDF">PDF</option><option value="Word">Word</option><option value="Excel">Excel</option><option value="JPEG/PNG">JPEG/PNG</option><option value="Otro">Otro</option></select></div>
+     <div class="file-upload-box">
+       <div class="formrow"><label>Subir archivo</label><input id="mFile" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.txt"></div>
+       <div class="manual-hint">Se guardará dentro del respaldo local del navegador. Para uso institucional y multiusuario, después conviene migrar esta carga a Firebase Storage.</div>
+       ${doc?.dataUrl?`<div class="file-row"><div><b>Archivo actual:</b> ${esc(doc.fileName||doc.name)}<div class="file-size">${humanFileSize(doc.size)}</div></div><a href="${doc.dataUrl}" download="${esc(doc.fileName||doc.name)}">Descargar</a></div>`:''}
+     </div>
+     <div class="formrow"><label>O link externo / Drive / OneDrive</label><input id="mUrl" value="${esc(doc?.url||'')}" placeholder="Opcional"></div>
+     <div class="formrow"><label>Nota</label><textarea id="mDesc">${esc(doc?.desc||'')}</textarea></div>
+     <div class="actions"><button type="button" class="btn btn-outline" data-close-modal>Cancelar</button><button type="button" class="btn btn-primary" data-save-modal>Guardar</button></div>`;
+   setTimeout(()=>{if(doc)$('mType').value=doc.type||'PDF'},0);
+   $('modalBg').classList.add('on'); bindModalButtons(); return;
+ }
+ oldOpenModalV6(type,ctx);
+};
+
+saveReasonableDoc=async function(caseId){
+ const r=state.reasonable.find(x=>x.id===caseId); if(!r)return;
+ r.docs=Array.isArray(r.docs)?r.docs:[];
+ const file=$('mFile')?.files?.[0]||null;
+ let payload={};
+ if(file){
+   if(file.size>4.5*1024*1024){toast('Archivo muy pesado para esta versión local. Usa uno menor a 4,5 MB o pega link externo.');return}
+   payload.dataUrl=await fileToDataURL(file);
+   payload.fileName=file.name;
+   payload.mime=file.type||'application/octet-stream';
+   payload.size=file.size;
+ }
+ const data={name:val('mName') || file?.name || 'Documento',type:val('mType','PDF'),url:val('mUrl'),desc:val('mDesc'),date:new Date().toISOString(),...payload};
+ if(editingItem.type==='arDoc'&&editingItem.id){Object.assign(r.docs.find(x=>x.id===editingItem.id),data);toast('Documento actualizado')}
+ else r.docs.push({id:uid(),...data});
+ save();closeModal();renderAll();
+};
+
+renderReasonableCard=function(r){
+ const tasks=r.tasks||[], docs=r.docs||[];
+ const done=tasks.filter(t=>t.done).length;
+ return `<div class="ar-card alerta-${esc(r.priority)}">
+  <div class="ar-head"><div><div class="ar-name">${esc(r.student)}</div><div class="ar-meta">${esc(r.career||'Sin carrera')} · ${esc(r.course||'Sin curso')} · ${esc(r.studentId||'sin ID')}</div></div>
+  <div class="item-actions"><button class="btn btn-ghost btn-sm" onclick="openModal('edit:reasonable','${r.id}')">✏️</button><button class="btn btn-ghost btn-sm" onclick="deleteReasonable('${r.id}')">✕</button></div></div>
+  <div class="case-meta"><span class="tag ${tagClass(r.priority)}">prioridad ${esc(r.priority)}</span><span class="tag tag-olive">${esc(r.status)}</span><span class="tag tag-gold">${fmt(r.due)}</span><span class="tag tag-rose">${esc(r.owner)}</span></div>
+  <div class="ar-block"><b>Diagnóstico / antecedente:</b><br>${esc(r.diagnosis||'Sin registro.')}</div>
+  <div class="ar-block"><b>Ajustes acordados:</b><br>${esc(r.adjustments||'Sin ajustes registrados.')}</div>
+  <div class="ar-block"><b>Observaciones:</b><br>${esc(r.obs||'Sin observaciones.')}</div>
+  <div class="case-next"><b>Próxima acción</b><span>${esc(r.next||'Sin próxima acción definida.')}</span></div>
+  <div class="ar-block"><b>Tareas de seguimiento (${done}/${tasks.length})</b>
+    <div>${tasks.length?tasks.map(t=>`<div class="ar-task"><div class="ar-check ${t.done?'done':''}" onclick="toggleReasonableTask('${r.id}','${t.id}')"></div><div style="flex:1"><div class="ar-task-title ${t.done?'done':''}">${esc(t.title)}</div><div class="ar-meta">${esc(t.owner||'')} · ${fmt(t.due)}${t.desc?' · '+esc(t.desc):''}</div></div><div class="item-actions"><button class="btn btn-ghost btn-sm" onclick="openModal('edit:arTask','${t.id}');modalContext.ctx='${r.id}'">✏️</button><button class="btn btn-ghost btn-sm" onclick="deleteReasonableTask('${r.id}','${t.id}')">✕</button></div></div>`).join(''):'<div class="ar-meta">Sin tareas todavía.</div>'}</div>
+    <button class="btn btn-outline btn-sm" onclick="openModal('arTask','${r.id}')" style="margin-top:8px">+ tarea</button>
+  </div>
+  <div class="ar-block"><b>Documentos (${docs.length})</b>
+    <div class="file-list">${docs.length?docs.map(d=>`<div class="file-row">
+      <div style="display:flex;gap:9px;align-items:center">${d.dataUrl&&String(d.mime||'').startsWith('image/')?`<img class="doc-preview" src="${d.dataUrl}">`:''}<div><b>${esc(d.name)}</b><div class="ar-meta">${esc(d.type)} · ${esc(d.fileName||'sin archivo local')}${d.size?' · '+humanFileSize(d.size):''}</div><div class="ar-meta">${esc(d.desc||'')}</div></div></div>
+      <div class="item-actions">${d.dataUrl?`<a class="btn btn-outline btn-sm" href="${d.dataUrl}" download="${esc(d.fileName||d.name)}">Descargar</a>`:''}${d.url?`<a class="btn btn-outline btn-sm" href="${esc(normalizeUrl(d.url))}" target="_blank" rel="noopener">Abrir link</a>`:''}<button class="btn btn-ghost btn-sm" onclick="openModal('edit:arDoc','${d.id}');modalContext.ctx='${r.id}'">✏️</button><button class="btn btn-ghost btn-sm" onclick="deleteReasonableDoc('${r.id}','${d.id}')">✕</button></div>
+    </div>`).join(''):'<div class="ar-meta">Sin documentos asociados.</div>'}</div>
+    <button class="btn btn-outline btn-sm" onclick="openModal('arDoc','${r.id}')" style="margin-top:8px">+ subir documento</button>
+  </div>
+ </div>`;
+};
 
 renderAll();
 </script>

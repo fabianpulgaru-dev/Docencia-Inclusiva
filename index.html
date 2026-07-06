@@ -142,6 +142,29 @@ button{cursor:pointer}
 .autofill-box{background:var(--bg);border:1px dashed var(--bdr);border-radius:12px;padding:10px;margin:8px 0}
 .autofill-box textarea{min-height:80px}
 
+
+/* === v15 vistas masivas Ajustes Razonables === */
+.ar-toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin:10px 0 12px}
+.ar-toolbar-left,.ar-toolbar-right{display:flex;gap:7px;align-items:center;flex-wrap:wrap}
+.ar-view-btn{border:1px solid var(--bdr);background:white;border-radius:999px;padding:7px 10px;font-size:11px;color:var(--ink2);cursor:pointer}
+.ar-view-btn.active{background:#eef6f8;border-color:var(--blue);color:var(--blue);font-weight:700}
+.abc-filter{display:flex;gap:4px;flex-wrap:wrap;margin:8px 0 12px}
+.abc-btn{border:1px solid var(--bdr);background:white;border-radius:8px;min-width:28px;height:28px;font-size:11px;color:var(--ink2);cursor:pointer}
+.abc-btn.active{background:var(--blue);border-color:var(--blue);color:white}
+.ocr-panel.collapsed{display:none}
+.ocr-panel.floating{margin:8px 0 14px}
+.ar-list{display:flex;flex-direction:column;gap:8px}
+.ar-row{display:grid;grid-template-columns:1.1fr .9fr .75fr .75fr auto;gap:10px;align-items:center;background:white;border:1px solid var(--bdr);border-radius:14px;padding:10px 12px}
+.ar-row:hover{box-shadow:0 10px 22px rgba(24,32,38,.06)}
+.ar-row-name{font-family:'Fraunces',serif;font-size:17px;color:var(--ink)}
+.ar-row-meta{font-size:11px;color:var(--dim);line-height:1.4}
+.ar-row-field{font-size:12px;color:var(--ink2);line-height:1.4}
+.ar-compact{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:8px}
+.ar-mini{background:white;border:1px solid var(--bdr);border-radius:12px;padding:10px}
+.ar-mini .ar-name{font-size:16px}
+.ar-mini-meta{font-size:11px;color:var(--dim);margin-top:3px}
+@media(max-width:900px){.ar-row{grid-template-columns:1fr}.ar-row .item-actions{justify-content:flex-start}}
+
 </style>
 </head>
 <body>
@@ -163,7 +186,7 @@ button{cursor:pointer}
 
 <div class="app">
   <div class="topbar">
-    <div class="brand"><span class="star">✦</span>Mesa de Trabajo <small>gestión académica y proyectos · v14 AR manual seguimiento</small></div>
+    <div class="brand"><span class="star">✦</span>Mesa de Trabajo <small>gestión académica y proyectos · v15 vistas masivas AR</small></div>
     <div class="top-actions">
       <input class="search" id="globalSearch" placeholder="Buscar tareas, proyectos, notas…" oninput="renderAll()">
       <div class="sync-pill local" id="syncStatus">Local</div><div class="userchip"><div class="avatar" id="userAvatar">FP</div><span id="userLabel">Fabián · Admin</span></div><button class="btn btn-ghost btn-sm" id="logoutBtn" onclick="logoutFirebase()" style="display:none">Salir</button>
@@ -264,7 +287,21 @@ button{cursor:pointer}
         </div>
         <div class="grid grid4" style="margin-bottom:12px">
           <div class="stat"><div class="n" id="arOpen">0</div><div class="l">casos abiertos</div></div>
-        <div class="ocr-panel">
+        
+        <div class="ar-toolbar">
+          <div class="ar-toolbar-left">
+            <button class="btn btn-outline btn-sm" onclick="toggleOCRPanel()">📄 Importar cartas</button>
+            <span class="tag tag-blue" id="arViewMode">Vista: cuadrícula</span>
+          </div>
+          <div class="ar-toolbar-right">
+            <button class="ar-view-btn active" id="arViewGrid" onclick="setARView('grid')">Cuadrícula</button>
+            <button class="ar-view-btn" id="arViewList" onclick="setARView('list')">Lista</button>
+            <button class="ar-view-btn" id="arViewCompact" onclick="setARView('compact')">Compacta</button>
+          </div>
+        </div>
+        <div class="abc-filter" id="arAbcFilter"></div>
+
+        <div class="ocr-panel collapsed floating" id="ocrPanel">
           <h3>📄 Importar cartas de ajustes con OCR</h3>
           <p>Sube una o varias cartas PDF, Word/JPG/PNG. El sistema leerá el formato estándar UAH por secciones y creará casos de Ajustes Razonables automáticamente. Después revisa cada caso antes de usarlo oficialmente.</p>
           <div class="ocr-actions">
@@ -2420,6 +2457,117 @@ importarCartasAjustesOCR=async function(){
   }
   setOCRBar(100);
   toast(`Importación terminada: ${creados} caso(s) creado(s)`);
+};
+
+
+/* === v15: vistas masivas y filtro ABC para Ajustes Razonables === */
+let arView = localStorage.getItem('mesaARView') || 'grid';
+let arLetter = localStorage.getItem('mesaARLetter') || 'todos';
+
+function toggleOCRPanel(){
+  const p=$('ocrPanel');
+  if(!p)return;
+  p.classList.toggle('collapsed');
+}
+function setARView(view){
+  arView=view;
+  localStorage.setItem('mesaARView',view);
+  renderReasonable();
+}
+function setARLetter(letter){
+  arLetter=letter;
+  localStorage.setItem('mesaARLetter',letter);
+  renderReasonable();
+}
+function firstLetterAR(name){
+  const clean=String(name||'').trim().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+  return clean ? clean[0].toUpperCase() : '#';
+}
+function renderARAbcFilter(arr){
+  const el=$('arAbcFilter'); if(!el)return;
+  const letters=[...new Set((state.reasonable||[]).map(r=>firstLetterAR(r.student)).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+  el.innerHTML=[
+    `<button class="abc-btn ${arLetter==='todos'?'active':''}" onclick="setARLetter('todos')">Todos</button>`,
+    ...letters.map(l=>`<button class="abc-btn ${arLetter===l?'active':''}" onclick="setARLetter('${l}')">${l}</button>`)
+  ].join('');
+}
+function updateARViewButtons(){
+  [['grid','arViewGrid','Vista: cuadrícula'],['list','arViewList','Vista: lista'],['compact','arViewCompact','Vista: compacta']].forEach(([v,id,label])=>{
+    const b=$(id); if(b)b.classList.toggle('active',arView===v);
+    if(arView===v && $('arViewMode')) $('arViewMode').textContent=label;
+  });
+}
+function sortAR(arr){
+  return arr.sort((a,b)=>(a.student||'').localeCompare(b.student||'','es',{sensitivity:'base'}));
+}
+function arActions(r){
+  return `<div class="item-actions">
+    <button class="btn btn-ghost btn-sm" onclick="openModal('edit:reasonable','${r.id}')">✏️</button>
+    <button class="btn btn-ghost btn-sm" onclick="deleteReasonable('${r.id}')">✕</button>
+  </div>`;
+}
+function renderReasonableRow(r){
+  const docs=(r.docs||[]).length;
+  const pending=(r.tasks||[]).filter(t=>!t.done).length;
+  return `<div class="ar-row">
+    <div><div class="ar-row-name">${esc(r.student)}</div><div class="ar-row-meta">${esc(r.career||'Sin carrera')} · ${esc(r.studentId||'sin ID')}</div></div>
+    <div class="ar-row-field"><b>Diagnóstico:</b> ${esc(r.diagnosis||'Sin registro')}</div>
+    <div class="ar-row-field"><span class="tag ${tagClass(r.priority)}">${esc(r.priority)}</span> <span class="tag tag-olive">${esc(r.status)}</span></div>
+    <div class="ar-row-field">${docs} doc. · ${pending} tareas pend.</div>
+    ${arActions(r)}
+  </div>`;
+}
+function renderReasonableMini(r){
+  return `<div class="ar-mini">
+    <div style="display:flex;justify-content:space-between;gap:8px">
+      <div><div class="ar-name">${esc(r.student)}</div><div class="ar-mini-meta">${esc(r.career||'Sin carrera')}</div></div>
+      ${arActions(r)}
+    </div>
+    <div class="case-meta" style="margin-top:8px"><span class="tag ${tagClass(r.priority)}">${esc(r.priority)}</span><span class="tag tag-olive">${esc(r.status)}</span></div>
+    <div class="ar-mini-meta" style="margin-top:6px">${esc(r.diagnosis||'Sin diagnóstico').slice(0,130)}${String(r.diagnosis||'').length>130?'…':''}</div>
+  </div>`;
+}
+
+const renderReasonableBeforeV15 = renderReasonable;
+renderReasonable=function(){
+ ensureStateShape();
+ const grid=$('reasonableGrid'); if(!grid)return;
+ let arr=searchFilter(state.reasonable,['student','studentId','career','course','status','priority','owner','diagnosis','adjustments','obs','next','tags']);
+ if(arFilter!=='todos') arr=arr.filter(r=>['abierto','seguimiento','cerrado'].includes(arFilter)?r.status===arFilter:r.priority===arFilter);
+ if(arLetter!=='todos') arr=arr.filter(r=>firstLetterAR(r.student)===arLetter);
+ arr=sortAR(arr);
+
+ const open=state.reasonable.filter(r=>r.status!=='cerrado');
+ const high=open.filter(r=>r.priority==='alta');
+ const pending=state.reasonable.flatMap(r=>(r.tasks||[])).filter(t=>!t.done);
+ const docs=state.reasonable.flatMap(r=>(r.docs||[]));
+ if($('arOpen'))$('arOpen').textContent=open.length;
+ if($('arHigh'))$('arHigh').textContent=high.length;
+ if($('arTasks'))$('arTasks').textContent=pending.length;
+ if($('arDocs'))$('arDocs').textContent=docs.length;
+ if($('arBadge'))$('arBadge').textContent=open.length;
+
+ renderARAbcFilter(arr);
+ updateARViewButtons();
+
+ if(!arr.length){
+   grid.className='case-grid';
+   grid.innerHTML=`<div class="empty" style="grid-column:1/-1"><div class="ico">🧩</div><p>No hay casos de ajustes razonables para este filtro.</p></div>`;
+   return;
+ }
+
+ if(arView==='list'){
+   grid.className='ar-list';
+   grid.innerHTML=arr.map(renderReasonableRow).join('');
+   return;
+ }
+ if(arView==='compact'){
+   grid.className='ar-compact';
+   grid.innerHTML=arr.map(renderReasonableMini).join('');
+   return;
+ }
+ grid.className='case-grid';
+ grid.innerHTML=arr.map(r=>renderReasonableCard(r)).join('');
 };
 
 bootFirebaseAuth();

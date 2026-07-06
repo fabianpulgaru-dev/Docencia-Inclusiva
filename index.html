@@ -104,15 +104,57 @@ button{cursor:pointer}
 .ar-task-title.done{text-decoration:line-through;color:var(--dim)}
 .manual-hint{font-size:11px;color:var(--dim);line-height:1.5;background:var(--bg);border:1px dashed var(--bdr);border-radius:10px;padding:8px;margin-top:8px}
 
+
+/* === v7 tareas integradas en casos + subida visible === */
+.case-inline-tasks{background:var(--bg);border:1px solid var(--bdr);border-radius:12px;padding:10px;margin-top:10px}
+.case-inline-title{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);margin-bottom:6px}
+.case-inline-task{display:flex;gap:8px;align-items:flex-start;border-bottom:1px solid var(--bg2);padding:7px 0}
+.case-inline-task:last-child{border-bottom:none}
+.case-inline-task .task-title{font-size:13px}
+.case-inline-empty{font-size:12px;color:var(--dim);padding:4px 0}
+.upload-cta{border:1px dashed var(--blue);background:#eef6f8;border-radius:14px;padding:12px;margin-top:10px}
+.upload-cta-title{font-weight:700;color:var(--blue);font-size:13px;margin-bottom:4px}
+.upload-cta-sub{font-size:11px;color:var(--dim);line-height:1.5;margin-bottom:8px}
+.ar-doc-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+
+
+/* === v8 Firebase Auth + Sync === */
+#loginScreen{position:fixed;inset:0;background:linear-gradient(135deg,var(--ink),#24323a);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px}
+#loginScreen.hidden{display:none}
+.login-card{width:min(440px,92vw);background:white;border:1px solid var(--bdr);border-radius:22px;padding:28px;box-shadow:0 25px 70px rgba(0,0,0,.25)}
+.login-card h1{font-size:32px;color:var(--ink);margin-bottom:8px}
+.login-card p{font-size:13px;color:var(--dim);line-height:1.7;margin-bottom:18px}
+.login-actions{display:flex;gap:8px;flex-wrap:wrap}
+.sync-pill{font-size:11px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);border-radius:999px;padding:7px 10px;color:rgba(255,255,255,.7)}
+.sync-pill.local{background:rgba(180,120,50,.14);color:#f3d1a0}
+.sync-pill.cloud{background:rgba(80,150,120,.18);color:#bfe9d4}
+#firebaseConfigPanel{display:none;margin-top:12px;background:var(--bg);border:1px dashed var(--bdr);border-radius:12px;padding:10px;font-size:11px;color:var(--dim);line-height:1.6}
+
 </style>
 </head>
 <body>
+
+<div id="loginScreen">
+  <div class="login-card">
+    <div style="font-size:26px;margin-bottom:8px">✦</div>
+    <h1>Mesa de Trabajo</h1>
+    <p>Ingresa con Google para sincronizar tus proyectos, tareas, casos, ajustes razonables y documentos entre dispositivos.</p>
+    <div class="login-actions">
+      <button class="btn btn-primary" onclick="loginGoogle()">Ingresar con Google</button>
+      <button class="btn btn-outline" onclick="entrarModoLocal()">Usar modo local</button>
+    </div>
+    <div id="firebaseConfigPanel">
+      Firebase todavía no está configurado. Pega tu <b>firebaseConfig</b> dentro del bloque <b>MESA_FIREBASE_CONFIG</b> del HTML.
+    </div>
+  </div>
+</div>
+
 <div class="app">
   <div class="topbar">
-    <div class="brand"><span class="star">✦</span>Mesa de Trabajo <small>gestión académica y proyectos · v6 casos emergentes + archivos</small></div>
+    <div class="brand"><span class="star">✦</span>Mesa de Trabajo <small>gestión académica y proyectos · v8 Firebase</small></div>
     <div class="top-actions">
       <input class="search" id="globalSearch" placeholder="Buscar tareas, proyectos, notas…" oninput="renderAll()">
-      <div class="userchip"><div class="avatar">FP</div><span>Fabián · Admin</span></div>
+      <div class="sync-pill local" id="syncStatus">Local</div><div class="userchip"><div class="avatar" id="userAvatar">FP</div><span id="userLabel">Fabián · Admin</span></div><button class="btn btn-ghost btn-sm" id="logoutBtn" onclick="logoutFirebase()" style="display:none">Salir</button>
     </div>
   </div>
   <div class="body">
@@ -253,8 +295,151 @@ button{cursor:pointer}
 
 <div class="modal-bg" id="modalBg" onclick="if(event.target===this)closeModal()"><div class="modal" id="modal"></div></div>
 <div class="toast" id="toast"></div>
+
+<!-- Firebase SDK compat: Auth + Realtime Database + Storage -->
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-storage-compat.js"></script>
+
 <script>
 const $=id=>document.getElementById(id);
+
+// ── FIREBASE CONFIG ──────────────────────────────────────────
+// Pega aquí el firebaseConfig de tu proyecto.
+// Debe incluir databaseURL. Storage se activa con storageBucket.
+const MESA_FIREBASE_CONFIG = {
+  apiKey: "AIzaSyCTMsAAvTOt7IRXvXRlZGgoYk4knccHpa4",
+  authDomain: "trayectoria-2026.firebaseapp.com",
+  databaseURL: "https://trayectoria-2026-default-rtdb.firebaseio.com",
+  projectId: "trayectoria-2026",
+  storageBucket: "trayectoria-2026.firebasestorage.app",
+  messagingSenderId: "963939528799",
+  appId: "1:963939528799:web:dc462d7717bc0e7df5abea"
+};
+
+let fbApp=null, fbAuth=null, fbDb=null, fbStorage=null, fbUser=null;
+let cloudReady=false, firebaseConfigured=false, applyingRemote=false, pendingCloudSave=null;
+
+function firebaseConfigOk(){
+  return MESA_FIREBASE_CONFIG
+    && MESA_FIREBASE_CONFIG.apiKey
+    && !String(MESA_FIREBASE_CONFIG.apiKey).includes("PEGA_AQUI")
+    && MESA_FIREBASE_CONFIG.databaseURL
+    && !String(MESA_FIREBASE_CONFIG.databaseURL).includes("PEGA_AQUI");
+}
+function setSyncStatus(txt,mode='local'){
+  const el=$('syncStatus');
+  if(!el)return;
+  el.textContent=txt;
+  el.className='sync-pill '+mode;
+}
+function userPath(){
+  return fbUser ? 'users/'+fbUser.uid+'/mesaTrabajo/state' : null;
+}
+function docsPath(fileName='archivo'){
+  const safe=String(fileName||'archivo').replace(/[^\w.\-áéíóúñÁÉÍÓÚÑ ]+/g,'_').slice(0,90);
+  return 'users/'+fbUser.uid+'/mesaTrabajo/docs/'+Date.now()+'_'+safe;
+}
+function initFirebase(){
+  try{
+    firebaseConfigured=firebaseConfigOk() && typeof firebase!=='undefined';
+    if(!firebaseConfigured){
+      const p=$('firebaseConfigPanel'); if(p)p.style.display='block';
+      setSyncStatus('Local · falta config','local');
+      return false;
+    }
+    fbApp=firebase.initializeApp(MESA_FIREBASE_CONFIG);
+    fbAuth=firebase.auth();
+    fbDb=firebase.database();
+    fbStorage=firebase.storage();
+    return true;
+  }catch(err){
+    console.error('Firebase init error:',err);
+    setSyncStatus('Local · error Firebase','local');
+    return false;
+  }
+}
+function attachCloudState(){
+  if(!fbDb||!fbUser)return;
+  setSyncStatus('Conectando…','local');
+  fbDb.ref(userPath()).on('value',snap=>{
+    const remote=snap.val();
+    if(remote){
+      applyingRemote=true;
+      state=remote;
+      ensureStateShape();
+      localStorage.setItem('mesaTrabajoV1',JSON.stringify(state));
+      applyingRemote=false;
+      renderAll();
+      setSyncStatus('Sincronizado','cloud');
+    }else{
+      cloudSaveNow();
+      setSyncStatus('Primer respaldo creado','cloud');
+    }
+  },err=>{
+    console.error(err);
+    setSyncStatus('Error de permisos','local');
+    toast('Firebase no dejó leer/escribir. Revisa reglas.');
+  });
+}
+function cloudSaveNow(){
+  if(!cloudReady||!fbDb||!fbUser||applyingRemote)return;
+  const payload=JSON.parse(JSON.stringify(state||{}));
+  payload._meta={updatedAt:new Date().toISOString(),updatedBy:fbUser.email||'',version:'mesaTrabajoV8Firebase'};
+  return fbDb.ref(userPath()).set(payload).then(()=>setSyncStatus('Guardado en nube','cloud')).catch(err=>{
+    console.error(err);
+    setSyncStatus('Error guardando','local');
+  });
+}
+function scheduleCloudSave(){
+  if(!cloudReady||applyingRemote)return;
+  clearTimeout(pendingCloudSave);
+  pendingCloudSave=setTimeout(cloudSaveNow,450);
+}
+function loginGoogle(){
+  if(!fbAuth){
+    toast('Primero pega la configuración de Firebase');
+    const p=$('firebaseConfigPanel'); if(p)p.style.display='block';
+    return;
+  }
+  const provider=new firebase.auth.GoogleAuthProvider();
+  fbAuth.signInWithPopup(provider).catch(err=>{
+    console.error(err);
+    toast('No se pudo iniciar sesión con Google');
+  });
+}
+function entrarModoLocal(){
+  const s=$('loginScreen'); if(s)s.classList.add('hidden');
+  setSyncStatus('Modo local','local');
+  renderAll();
+}
+function logoutFirebase(){
+  if(fbAuth)fbAuth.signOut();
+}
+function bootFirebaseAuth(){
+  if(!initFirebase()){
+    const s=$('loginScreen'); if(s)s.classList.remove('hidden');
+    return;
+  }
+  fbAuth.onAuthStateChanged(user=>{
+    fbUser=user;
+    if(user){
+      cloudReady=true;
+      const s=$('loginScreen'); if(s)s.classList.add('hidden');
+      const lb=$('userLabel'); if(lb)lb.textContent=(user.displayName||user.email||'Usuario')+' · nube';
+      const av=$('userAvatar'); if(av)av.textContent=(user.displayName||user.email||'U').slice(0,2).toUpperCase();
+      const out=$('logoutBtn'); if(out)out.style.display='';
+      attachCloudState();
+    }else{
+      cloudReady=false;
+      const out=$('logoutBtn'); if(out)out.style.display='none';
+      const s=$('loginScreen'); if(s)s.classList.remove('hidden');
+      setSyncStatus('Sin sesión','local');
+    }
+  });
+}
+
 const today=new Date();
 let state=JSON.parse(localStorage.getItem('mesaTrabajoV1')||'null')||{
  projects:[
@@ -297,7 +482,7 @@ if(!state.tasks.length){
 let taskFilter='todas', projectFilter='todos', caseFilter='todos', currentProjectId=null, currentProjectTab='resumen', modalContext={type:null,ctx:''};
 if(!state.cases.length && state.projects?.length){ const p=state.projects; state.cases=[{id:uid(),name:'Caso específico de prueba',type:'Estudiante / docente / carrera',program:'UTE',project:p[0]?.id||'',status:'abierto',alert:'media',owner:'Fabián',next:'Registrar la próxima acción del caso.',due:isoAdd(2),desc:'Usa esta ficha para hacer seguimiento de una situación puntual.',history:'Caso creado como ejemplo inicial.'}]; save(); }
 function uid(){return Math.random().toString(36).slice(2)+Date.now().toString(36)}
-function save(){localStorage.setItem('mesaTrabajoV1',JSON.stringify(state))}
+function save(){localStorage.setItem('mesaTrabajoV1',JSON.stringify(state)); scheduleCloudSave();}
 function isoAdd(n){const d=new Date();d.setDate(d.getDate()+n);return d.toISOString().slice(0,10)}
 
 function ensureStateShape(){
@@ -1100,7 +1285,7 @@ openModal=function(type,ctx=''){
      <div class="file-upload-box">
        <div class="formrow"><label>Subir archivo</label><input id="mFile" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.txt"></div>
        <div class="manual-hint">Se guardará dentro del respaldo local del navegador. Para uso institucional y multiusuario, después conviene migrar esta carga a Firebase Storage.</div>
-       ${doc?.dataUrl?`<div class="file-row"><div><b>Archivo actual:</b> ${esc(doc.fileName||doc.name)}<div class="file-size">${humanFileSize(doc.size)}</div></div><a href="${doc.dataUrl}" download="${esc(doc.fileName||doc.name)}">Descargar</a></div>`:''}
+       ${(doc?.dataUrl||doc?.downloadURL)?`<div class="file-row"><div><b>Archivo actual:</b> ${esc(doc.fileName||doc.name)}<div class="file-size">${humanFileSize(doc.size)}</div></div><a href="${esc(doc.downloadURL||doc.dataUrl)}" target="_blank" rel="noopener">Descargar</a></div>`:''}
      </div>
      <div class="formrow"><label>O link externo / Drive / OneDrive</label><input id="mUrl" value="${esc(doc?.url||'')}" placeholder="Opcional"></div>
      <div class="formrow"><label>Nota</label><textarea id="mDesc">${esc(doc?.desc||'')}</textarea></div>
@@ -1147,13 +1332,176 @@ renderReasonableCard=function(r){
   <div class="ar-block"><b>Documentos (${docs.length})</b>
     <div class="file-list">${docs.length?docs.map(d=>`<div class="file-row">
       <div style="display:flex;gap:9px;align-items:center">${d.dataUrl&&String(d.mime||'').startsWith('image/')?`<img class="doc-preview" src="${d.dataUrl}">`:''}<div><b>${esc(d.name)}</b><div class="ar-meta">${esc(d.type)} · ${esc(d.fileName||'sin archivo local')}${d.size?' · '+humanFileSize(d.size):''}</div><div class="ar-meta">${esc(d.desc||'')}</div></div></div>
-      <div class="item-actions">${d.dataUrl?`<a class="btn btn-outline btn-sm" href="${d.dataUrl}" download="${esc(d.fileName||d.name)}">Descargar</a>`:''}${d.url?`<a class="btn btn-outline btn-sm" href="${esc(normalizeUrl(d.url))}" target="_blank" rel="noopener">Abrir link</a>`:''}<button class="btn btn-ghost btn-sm" onclick="openModal('edit:arDoc','${d.id}');modalContext.ctx='${r.id}'">✏️</button><button class="btn btn-ghost btn-sm" onclick="deleteReasonableDoc('${r.id}','${d.id}')">✕</button></div>
+      <div class="item-actions">${(d.downloadURL||d.dataUrl)?`<a class="btn btn-outline btn-sm" href="${esc(d.downloadURL||d.dataUrl)}" ${d.dataUrl?'download="'+esc(d.fileName||d.name)+'"':''} target="_blank" rel="noopener">Descargar</a>`:''}${d.url?`<a class="btn btn-outline btn-sm" href="${esc(normalizeUrl(d.url))}" target="_blank" rel="noopener">Abrir link</a>`:''}<button class="btn btn-ghost btn-sm" onclick="openModal('edit:arDoc','${d.id}');modalContext.ctx='${r.id}'">✏️</button><button class="btn btn-ghost btn-sm" onclick="deleteReasonableDoc('${r.id}','${d.id}')">✕</button></div>
     </div>`).join(''):'<div class="ar-meta">Sin documentos asociados.</div>'}</div>
     <button class="btn btn-outline btn-sm" onclick="openModal('arDoc','${r.id}')" style="margin-top:8px">+ subir documento</button>
   </div>
  </div>`;
 };
 
+
+/* === MEJORAS v7: tareas dentro de Casos específicos y subida visible de archivos === */
+function renderCaseTaskMini(caseId, limit=4){
+  const tasks=caseTasks(caseId).sort((a,b)=>(a.status==='terminada')-(b.status==='terminada')||(a.due||'').localeCompare(b.due||''));
+  if(!tasks.length) return '<div class="case-inline-empty">Sin tareas vinculadas todavía.</div>';
+  return tasks.slice(0,limit).map(t=>`<div class="case-inline-task">
+    <div class="case-task-check ${t.status==='terminada'?'done':''}" onclick="event.stopPropagation();toggleTask('${t.id}');renderAll()"></div>
+    <div style="flex:1">
+      <div class="task-title ${t.status==='terminada'?'done':''}">${esc(t.title)}</div>
+      <div class="task-meta">
+        <span class="tag ${tagClass(t.priority)}">${esc(t.priority)}</span>
+        <span class="tag tag-olive">${esc(t.status)}</span>
+        <span class="tag tag-gold">${fmt(t.due)}</span>
+      </div>
+    </div>
+    <div class="item-actions">
+      <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();openModal('edit:task','${t.id}')">✏️</button>
+      <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();deleteTask('${t.id}');renderAll()">✕</button>
+    </div>
+  </div>`).join('') + (tasks.length>limit?`<div class="case-inline-empty">+ ${tasks.length-limit} tarea(s) más en la ficha del caso.</div>`:'');
+}
+
+renderCases=function(){
+ let arr=searchFilter(state.cases||[],['name','type','program','status','alert','owner','desc','next','history']);
+ if(caseFilter!=='todos')arr=arr.filter(c=>['abierto','en seguimiento','bloqueado','cerrado'].includes(caseFilter)?c.status===caseFilter:c.alert===caseFilter);
+ arr.sort((a,b)=>({alta:0,media:1,baja:2}[a.alert]??3)-({alta:0,media:1,baja:2}[b.alert]??3)||(a.due||'').localeCompare(b.due||''));
+ $('caseGrid').innerHTML=arr.length?arr.map(c=>`<div class="case-card case-click alerta-${esc(c.alert)}" onclick="openCaseDetail('${c.id}')">
+   <div class="case-top">
+     <div><div class="case-name">${esc(c.name)}</div><div class="case-type">${esc(c.type)} · ${esc(c.program||'Sin programa')}</div></div>
+     <span class="tag ${tagClass(c.alert)}">alerta ${esc(c.alert)}</span>
+   </div>
+   <div class="case-desc">${esc(c.desc||'')}</div>
+   <div class="case-meta">
+     <span class="tag tag-olive">${esc(c.status)}</span>
+     <span class="tag tag-gold">${fmt(c.due)}</span>
+     <span class="tag tag-rose">${esc(c.owner)}</span>
+     <span class="tag tag-blue">${caseTasks(c.id).filter(t=>t.status!=='terminada').length} tareas pendientes</span>
+   </div>
+   <div class="case-next"><b>Próxima acción</b><span>${esc(c.next||'Sin próxima acción definida.')}</span></div>
+   <div class="case-inline-tasks">
+     <div class="case-inline-title">Tareas del caso</div>
+     ${renderCaseTaskMini(c.id)}
+     <div class="item-actions" style="margin-top:8px;justify-content:flex-start">
+       <button class="btn btn-primary btn-sm" onclick="event.stopPropagation();openModal('caseTask','${c.id}')">+ Tarea</button>
+       <button class="btn btn-outline btn-sm" onclick="event.stopPropagation();openCaseDetail('${c.id}')">Ver ficha completa</button>
+     </div>
+   </div>
+   <div class="case-history"><b>Historial:</b> ${esc(c.history||'Sin historial registrado.')}</div>
+   <div class="item-actions" style="margin-top:8px">
+     <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();openModal('edit:case','${c.id}')">✏️ Editar</button>
+     <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();closeCase('${c.id}')">${c.status==='cerrado'?'Reabrir':'Cerrar'}</button>
+     <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();deleteCase('${c.id}')">✕</button>
+   </div>
+ </div>`).join(''):`<div class="empty"><div class="ico">🎯</div><p>No hay casos específicos registrados.</p></div>`;
+};
+
+function openARDoc(caseId, docId=''){
+  editingItem={type:docId?'arDoc':null,id:docId||null};
+  modalContext={type:'arDoc',ctx:caseId};
+  const r=state.reasonable.find(x=>x.id===caseId);
+  const doc=docId?(r?.docs||[]).find(x=>x.id===docId):null;
+  const m=$('modal');
+  m.innerHTML=`<h3>${doc?'Editar':'Subir'} archivo / documento</h3>
+    <div class="formrow"><label>Caso</label><input value="${esc(r?.student||'Caso')}" disabled></div>
+    <div class="formrow"><label>Nombre visible del documento</label><input id="mName" value="${esc(doc?.name||'')}" placeholder="Ej: Diagnóstico, certificado, informe, adecuación, evidencia"></div>
+    <div class="grid grid2"><div class="formrow"><label>Tipo</label><select id="mType"><option value="PDF">PDF</option><option value="Word">Word</option><option value="Excel">Excel</option><option value="JPEG/PNG">JPEG/PNG</option><option value="Otro">Otro</option></select></div><div class="formrow"><label>Clasificación</label><input id="mDesc" value="${esc(doc?.desc||'')}" placeholder="Diagnóstico, respaldo, acuerdo, seguimiento..."></div></div>
+    <div class="file-upload-box">
+      <div class="upload-cta-title">Subir archivo desde el computador</div>
+      <div class="upload-cta-sub">Acepta PDF, Word, Excel, JPG y PNG. En esta versión se guarda localmente en el navegador.</div>
+      <input id="mFile" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.txt">
+      ${(doc?.dataUrl||doc?.downloadURL)?`<div class="file-row" style="margin-top:8px"><div><b>Archivo actual:</b> ${esc(doc.fileName||doc.name)}<div class="file-size">${humanFileSize(doc.size)}</div></div><a href="${esc(doc.downloadURL||doc.dataUrl)}" target="_blank" rel="noopener">Descargar</a></div>`:''}
+    </div>
+    <div class="formrow"><label>Link externo opcional</label><input id="mUrl" value="${esc(doc?.url||'')}" placeholder="Drive, OneDrive u otro respaldo"></div>
+    <div class="actions"><button type="button" class="btn btn-outline" data-close-modal>Cancelar</button><button type="button" class="btn btn-primary" data-save-modal>Guardar archivo</button></div>`;
+  setTimeout(()=>{if(doc)$('mType').value=doc.type||'PDF'},0);
+  $('modalBg').classList.add('on');
+  bindModalButtons();
+}
+
+const oldOpenModalV7=openModal;
+openModal=function(type,ctx=''){
+  if(type==='arDoc'){openARDoc(ctx);return}
+  if(type==='edit:arDoc'){
+    // ctx viene como "caseId|docId"
+    const [caseId,docId]=String(ctx||'').split('|');
+    openARDoc(caseId,docId);
+    return;
+  }
+  oldOpenModalV7(type,ctx);
+};
+
+renderReasonableCard=function(r){
+ const tasks=r.tasks||[], docs=r.docs||[];
+ const done=tasks.filter(t=>t.done).length;
+ return `<div class="ar-card alerta-${esc(r.priority)}">
+  <div class="ar-head"><div><div class="ar-name">${esc(r.student)}</div><div class="ar-meta">${esc(r.career||'Sin carrera')} · ${esc(r.course||'Sin curso')} · ${esc(r.studentId||'sin ID')}</div></div>
+  <div class="item-actions"><button class="btn btn-ghost btn-sm" onclick="openModal('edit:reasonable','${r.id}')">✏️</button><button class="btn btn-ghost btn-sm" onclick="deleteReasonable('${r.id}')">✕</button></div></div>
+  <div class="case-meta"><span class="tag ${tagClass(r.priority)}">prioridad ${esc(r.priority)}</span><span class="tag tag-olive">${esc(r.status)}</span><span class="tag tag-gold">${fmt(r.due)}</span><span class="tag tag-rose">${esc(r.owner)}</span></div>
+  <div class="ar-block"><b>Diagnóstico / antecedente:</b><br>${esc(r.diagnosis||'Sin registro.')}</div>
+  <div class="ar-block"><b>Ajustes acordados:</b><br>${esc(r.adjustments||'Sin ajustes registrados.')}</div>
+  <div class="ar-block"><b>Observaciones:</b><br>${esc(r.obs||'Sin observaciones.')}</div>
+  <div class="case-next"><b>Próxima acción</b><span>${esc(r.next||'Sin próxima acción definida.')}</span></div>
+  <div class="ar-block"><b>Tareas de seguimiento (${done}/${tasks.length})</b>
+    <div>${tasks.length?tasks.map(t=>`<div class="ar-task"><div class="ar-check ${t.done?'done':''}" onclick="toggleReasonableTask('${r.id}','${t.id}')"></div><div style="flex:1"><div class="ar-task-title ${t.done?'done':''}">${esc(t.title)}</div><div class="ar-meta">${esc(t.owner||'')} · ${fmt(t.due)}${t.desc?' · '+esc(t.desc):''}</div></div><div class="item-actions"><button class="btn btn-ghost btn-sm" onclick="openModal('edit:arTask','${t.id}');modalContext.ctx='${r.id}'">✏️</button><button class="btn btn-ghost btn-sm" onclick="deleteReasonableTask('${r.id}','${t.id}')">✕</button></div></div>`).join(''):'<div class="ar-meta">Sin tareas todavía.</div>'}</div>
+    <button class="btn btn-outline btn-sm" onclick="openModal('arTask','${r.id}')" style="margin-top:8px">+ tarea</button>
+  </div>
+  <div class="upload-cta">
+    <div class="upload-cta-title">Documentos del caso (${docs.length})</div>
+    <div class="upload-cta-sub">Aquí se guardan diagnósticos, certificados, informes, evidencias, acuerdos y otros respaldos relevantes.</div>
+    <button class="btn btn-primary btn-sm" onclick="openARDoc('${r.id}')">+ Subir archivo</button>
+    <div class="file-list">${docs.length?docs.map(d=>`<div class="file-row">
+      <div style="display:flex;gap:9px;align-items:center">${d.dataUrl&&String(d.mime||'').startsWith('image/')?`<img class="doc-preview" src="${d.dataUrl}">`:''}<div><b>${esc(d.name)}</b><div class="ar-meta">${esc(d.type)} · ${esc(d.fileName||'sin archivo local')}${d.size?' · '+humanFileSize(d.size):''}</div><div class="ar-meta">${esc(d.desc||'')}</div></div></div>
+      <div class="item-actions">${(d.downloadURL||d.dataUrl)?`<a class="btn btn-outline btn-sm" href="${esc(d.downloadURL||d.dataUrl)}" ${d.dataUrl?'download="'+esc(d.fileName||d.name)+'"':''} target="_blank" rel="noopener">Descargar</a>`:''}${d.url?`<a class="btn btn-outline btn-sm" href="${esc(normalizeUrl(d.url))}" target="_blank" rel="noopener">Abrir link</a>`:''}<button class="btn btn-ghost btn-sm" onclick="openModal('edit:arDoc','${r.id}|${d.id}')">✏️</button><button class="btn btn-ghost btn-sm" onclick="deleteReasonableDoc('${r.id}','${d.id}')">✕</button></div>
+    </div>`).join(''):'<div class="ar-meta" style="margin-top:8px">Sin documentos asociados todavía.</div>'}</div>
+  </div>
+ </div>`;
+};
+
+
+/* === v8: documentos de Ajustes Razonables a Firebase Storage si está conectado === */
+saveReasonableDoc=async function(caseId){
+ const r=state.reasonable.find(x=>x.id===caseId); if(!r)return;
+ r.docs=Array.isArray(r.docs)?r.docs:[];
+ const file=$('mFile')?.files?.[0]||null;
+ let payload={};
+ if(file){
+   if(cloudReady&&fbStorage&&fbUser){
+     try{
+       setSyncStatus('Subiendo archivo…','local');
+       const path=docsPath(file.name);
+       const ref=fbStorage.ref(path);
+       await ref.put(file,{contentType:file.type||'application/octet-stream'});
+       const url=await ref.getDownloadURL();
+       payload.storagePath=path;
+       payload.downloadURL=url;
+       payload.fileName=file.name;
+       payload.mime=file.type||'application/octet-stream';
+       payload.size=file.size;
+       setSyncStatus('Archivo subido','cloud');
+     }catch(err){
+       console.error(err);
+       toast('No se pudo subir a Storage. Se intentará guardar local si el archivo no es pesado.');
+       if(file.size>4.5*1024*1024){return}
+       payload.dataUrl=await fileToDataURL(file);
+       payload.fileName=file.name;
+       payload.mime=file.type||'application/octet-stream';
+       payload.size=file.size;
+     }
+   }else{
+     if(file.size>4.5*1024*1024){toast('Archivo muy pesado para modo local. Conecta Firebase Storage o pega link externo.');return}
+     payload.dataUrl=await fileToDataURL(file);
+     payload.fileName=file.name;
+     payload.mime=file.type||'application/octet-stream';
+     payload.size=file.size;
+   }
+ }
+ const data={name:val('mName') || file?.name || 'Documento',type:val('mType','PDF'),url:val('mUrl'),desc:val('mDesc'),date:new Date().toISOString(),...payload};
+ if(editingItem.type==='arDoc'&&editingItem.id){Object.assign(r.docs.find(x=>x.id===editingItem.id),data);toast('Documento actualizado')}
+ else r.docs.push({id:uid(),...data});
+ save();closeModal();renderAll();
+};
+
+bootFirebaseAuth();
 renderAll();
 </script>
 </body>

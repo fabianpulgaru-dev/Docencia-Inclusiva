@@ -163,7 +163,7 @@ button{cursor:pointer}
 
 <div class="app">
   <div class="topbar">
-    <div class="brand"><span class="star">✦</span>Mesa de Trabajo <small>gestión académica y proyectos · v13 parser breve AR</small></div>
+    <div class="brand"><span class="star">✦</span>Mesa de Trabajo <small>gestión académica y proyectos · v14 AR manual seguimiento</small></div>
     <div class="top-actions">
       <input class="search" id="globalSearch" placeholder="Buscar tareas, proyectos, notas…" oninput="renderAll()">
       <div class="sync-pill local" id="syncStatus">Local</div><div class="userchip"><div class="avatar" id="userAvatar">FP</div><span id="userLabel">Fabián · Admin</span></div><button class="btn btn-ghost btn-sm" id="logoutBtn" onclick="logoutFirebase()" style="display:none">Salir</button>
@@ -2339,6 +2339,88 @@ function resumenBreveCartaUAH(d){
     d.next ? `Próxima acción: ${d.next}` : ''
   ].filter(Boolean).join('\n');
 }
+
+
+/* === v14: dejar seguimiento manual en importación AR === */
+const extraerDatosCartaAjustesV13 = extraerDatosCartaAjustes;
+extraerDatosCartaAjustes=function(text){
+  const d=extraerDatosCartaAjustesV13(text);
+  // La lectura automática solo completa identificación, diagnóstico y ajustes.
+  // Estos campos quedan intencionalmente manuales:
+  // - observaciones
+  // - próxima acción
+  // - tareas de seguimiento
+  d.obs='';
+  d.next='';
+  d.manualFollowup=true;
+  return d;
+};
+
+const importarCartasAjustesOCR_V13 = importarCartasAjustesOCR;
+importarCartasAjustesOCR=async function(){
+  ensureStateShape();
+  const files=[...($('ocrFiles')?.files||[])];
+  if(!files.length){toast('Selecciona una o más cartas primero');return}
+  setOCRLog('Iniciando importación con parser UAH…',false);
+  setOCRBar(0);
+  let creados=0;
+  for(let i=0;i<files.length;i++){
+    try{
+      const file=files[i];
+      const text=await leerCartaOCR(file,i,files.length);
+      const d=extraerDatosCartaAjustes(text);
+      const caso={
+        id:uid(),
+        student:d.student||file.name.replace(/\.[^.]+$/,''),
+        studentId:d.studentId||'',
+        email:d.email||'',
+        phone:d.phone||'',
+        career:d.career||'',
+        course:'',
+        status:'abierto',
+        priority:'alta',
+        owner:'Fabián',
+        diagnosis:d.diagnosis||'',
+        adjustments:d.adjustments||'',
+        obs:'',
+        next:'',
+        due:'',
+        tags:'parser UAH, carta de ajustes',
+        tasks:[],
+        docs:[],
+        createdAt:new Date().toISOString(),
+        updatedAt:new Date().toISOString()
+      };
+      state.reasonable.push(caso);
+
+      if(cloudReady&&fbStorage&&fbUser){
+        try{
+          const path=docsPath(file.name);
+          await fbStorage.ref(path).put(file,{contentType:file.type||'application/octet-stream'});
+          const url=await fbStorage.ref(path).getDownloadURL();
+          caso.docs.push({id:uid(),name:'Carta original',type:file.type||'archivo',fileName:file.name,size:file.size,downloadURL:url,storagePath:path,desc:'Archivo original importado con parser UAH',date:new Date().toISOString()});
+        }catch(e){console.error(e); setOCRLog('No se pudo subir archivo original a Storage: '+file.name);}
+      }else if(file.size<4.5*1024*1024){
+        const dataUrl=await fileToDataURL(file);
+        caso.docs.push({id:uid(),name:'Carta original',type:file.type||'archivo',fileName:file.name,size:file.size,dataUrl,desc:'Archivo original importado con parser UAH',date:new Date().toISOString()});
+      }
+
+      creados++;
+      setOCRLog(`✓ Caso creado: ${caso.student}`);
+      setOCRLog(`  Carrera: ${caso.career||'sin detectar'} · RUT/ID: ${caso.studentId||'sin detectar'}`);
+      setOCRLog(`  Diagnóstico: ${caso.diagnosis||'sin detectar'}`);
+      setOCRLog(`  Ajustes: ${caso.adjustments||'sin detectar'}`);
+      setOCRLog('  Seguimiento manual pendiente: observaciones, próxima acción y tareas.');
+      save();
+      renderAll();
+    }catch(err){
+      console.error(err);
+      setOCRLog(`✕ Error con ${files[i].name}: ${err.message||err}`);
+    }
+  }
+  setOCRBar(100);
+  toast(`Importación terminada: ${creados} caso(s) creado(s)`);
+};
 
 bootFirebaseAuth();
 renderAll();

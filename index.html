@@ -130,6 +130,18 @@ button{cursor:pointer}
 .sync-pill.cloud{background:rgba(80,150,120,.18);color:#bfe9d4}
 #firebaseConfigPanel{display:none;margin-top:12px;background:var(--bg);border:1px dashed var(--bdr);border-radius:12px;padding:10px;font-size:11px;color:var(--dim);line-height:1.6}
 
+
+/* === v10 OCR Ajustes Razonables === */
+.ocr-panel{background:#eef6f8;border:1px dashed var(--blue);border-radius:16px;padding:14px;margin:12px 0}
+.ocr-panel h3{font-size:18px;margin-bottom:6px;color:var(--ink)}
+.ocr-panel p{font-size:12px;color:var(--dim);line-height:1.6;margin-bottom:10px}
+.ocr-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.ocr-log{margin-top:10px;background:white;border:1px solid var(--bdr);border-radius:12px;padding:10px;max-height:170px;overflow:auto;font-size:11px;color:var(--ink2);white-space:pre-wrap}
+.ocr-progress{height:7px;background:white;border:1px solid var(--bdr);border-radius:999px;overflow:hidden;margin-top:9px}
+.ocr-progress div{height:100%;width:0%;background:var(--blue);transition:width .25s}
+.autofill-box{background:var(--bg);border:1px dashed var(--bdr);border-radius:12px;padding:10px;margin:8px 0}
+.autofill-box textarea{min-height:80px}
+
 </style>
 </head>
 <body>
@@ -151,7 +163,7 @@ button{cursor:pointer}
 
 <div class="app">
   <div class="topbar">
-    <div class="brand"><span class="star">✦</span>Mesa de Trabajo <small>gestión académica y proyectos · v9 AR contacto + autofill</small></div>
+    <div class="brand"><span class="star">✦</span>Mesa de Trabajo <small>gestión académica y proyectos · v10 OCR ajustes razonables</small></div>
     <div class="top-actions">
       <input class="search" id="globalSearch" placeholder="Buscar tareas, proyectos, notas…" oninput="renderAll()">
       <div class="sync-pill local" id="syncStatus">Local</div><div class="userchip"><div class="avatar" id="userAvatar">FP</div><span id="userLabel">Fabián · Admin</span></div><button class="btn btn-ghost btn-sm" id="logoutBtn" onclick="logoutFirebase()" style="display:none">Salir</button>
@@ -252,6 +264,17 @@ button{cursor:pointer}
         </div>
         <div class="grid grid4" style="margin-bottom:12px">
           <div class="stat"><div class="n" id="arOpen">0</div><div class="l">casos abiertos</div></div>
+        <div class="ocr-panel">
+          <h3>📄 Importar cartas de ajustes con OCR</h3>
+          <p>Sube una o varias cartas PDF/JPG/PNG. El sistema intentará leer el texto y crear casos de Ajustes Razonables automáticamente. Después revisa cada caso antes de usarlo oficialmente.</p>
+          <div class="ocr-actions">
+            <input id="ocrFiles" type="file" multiple accept=".pdf,.jpg,.jpeg,.png">
+            <button class="btn btn-primary btn-sm" onclick="importarCartasAjustesOCR()">Leer cartas y crear casos</button>
+            <button class="btn btn-outline btn-sm" onclick="limpiarOCRLog()">Limpiar registro</button>
+          </div>
+          <div class="ocr-progress"><div id="ocrBar"></div></div>
+          <div class="ocr-log" id="ocrLog">Sin procesos todavía.</div>
+        </div>
           <div class="stat"><div class="n" id="arHigh">0</div><div class="l">alta prioridad</div></div>
           <div class="stat"><div class="n" id="arTasks">0</div><div class="l">tareas pendientes</div></div>
           <div class="stat"><div class="n" id="arDocs">0</div><div class="l">documentos</div></div>
@@ -301,6 +324,11 @@ button{cursor:pointer}
 <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-database-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-storage-compat.js"></script>
+
+
+<!-- OCR / PDF para importación de cartas de ajustes -->
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 
 <script>
 const $=id=>document.getElementById(id);
@@ -1530,6 +1558,314 @@ function autofillReasonableFromText(){
   if(career && $('mCareer')) $('mCareer').value=career;
   toast('Autocompletado aplicado. Revisa los datos antes de guardar.');
 }
+
+
+/* === v10: Ajustes Razonables corregido + OCR masivo === */
+
+function setOCRLog(msg, append=true){
+  const el=$('ocrLog'); if(!el)return;
+  if(!append) el.textContent=msg;
+  else el.textContent += '\n' + msg;
+  el.scrollTop=el.scrollHeight;
+}
+function setOCRBar(pct){
+  const bar=$('ocrBar'); if(bar)bar.style.width=Math.max(0,Math.min(100,pct))+'%';
+}
+function limpiarOCRLog(){ if($('ocrLog'))$('ocrLog').textContent='Sin procesos todavía.'; setOCRBar(0); }
+
+function extraerDatosCartaAjustes(text){
+  text=String(text||'').replace(/\r/g,'\n');
+  const clean=s=>String(s||'').replace(/\s+/g,' ').trim();
+  const email=(text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)||[])[0]||'';
+  const phone=(text.match(/(\+?56\s*)?(\(?9\)?\s*)?[\d\s.-]{8,14}/)||[])[0]||'';
+  const rut=(text.match(/\b\d{1,2}\.?\d{3}\.?\d{3}-[\dkK]\b/)||[])[0]||'';
+
+  function byLabel(labels){
+    const lines=text.split(/\n/).map(x=>x.trim()).filter(Boolean);
+    for(const line of lines){
+      for(const label of labels){
+        const re=new RegExp('^\\s*'+label+'\\s*[:\\-–]\\s*(.+)$','i');
+        const m=line.match(re);
+        if(m)return clean(m[1]);
+      }
+    }
+    return '';
+  }
+
+  let student=byLabel(['nombre','estudiante','alumno','alumna','nombre completo']);
+  let career=byLabel(['carrera','programa','plan de estudios']);
+  let diagnosis=byLabel(['diagnóstico','diagnostico','antecedente','condición','condicion']);
+  let adjustments=byLabel(['ajustes','ajustes razonables','adecuaciones','apoyos requeridos','recomendaciones']);
+  let obs=byLabel(['observaciones','comentarios','seguimiento']);
+  let next=byLabel(['próxima acción','proxima accion','acción sugerida','accion sugerida']);
+
+  if(!student){
+    const lines=text.split(/\n/).map(x=>x.trim()).filter(x=>x.length>4);
+    const maybe=lines.find(l=>/^[A-ZÁÉÍÓÚÑ][A-Za-zÁÉÍÓÚÑáéíóúñ]+\s+[A-ZÁÉÍÓÚÑ][A-Za-zÁÉÍÓÚÑáéíóúñ]+/.test(l) && !/@/.test(l));
+    student=maybe||'Estudiante sin identificar';
+  }
+
+  if(!adjustments){
+    const idx=text.toLowerCase().search(/ajustes|adecuaciones|recomendaciones|apoyos/);
+    if(idx>=0) adjustments=clean(text.slice(idx, idx+700));
+  }
+  if(!diagnosis){
+    const idx=text.toLowerCase().search(/diagn[oó]stico|antecedente|condici[oó]n|certifica/);
+    if(idx>=0) diagnosis=clean(text.slice(idx, idx+600));
+  }
+  if(!obs) obs=clean(text.slice(0,900));
+
+  return {
+    student: clean(student),
+    studentId: clean(rut),
+    email: clean(email),
+    phone: clean(phone),
+    career: clean(career),
+    diagnosis: clean(diagnosis),
+    adjustments: clean(adjustments),
+    obs: clean(obs),
+    next: clean(next),
+    rawText: text
+  };
+}
+
+function htmlModalReasonable(r=null){
+  return `<h3>${r?'Editar':'Nuevo'} caso de Ajustes Razonables</h3>
+    <div class="grid grid2">
+      <div class="formrow"><label>Estudiante</label><input id="mStudent" value="${esc(r?.student||'')}" placeholder="Nombre completo"></div>
+      <div class="formrow"><label>RUT / ID interno</label><input id="mStudentId" value="${esc(r?.studentId||'')}"></div>
+    </div>
+    <div class="grid grid2">
+      <div class="formrow"><label>Correo</label><input id="mEmail" type="email" value="${esc(r?.email||'')}" placeholder="correo@ejemplo.cl"></div>
+      <div class="formrow"><label>Teléfono</label><input id="mPhone" value="${esc(r?.phone||'')}" placeholder="+56 9 ..."></div>
+    </div>
+    <div class="formrow"><label>Carrera</label><input id="mCareer" value="${esc(r?.career||'')}"></div>
+
+    <div class="autofill-box">
+      <div class="formrow"><label>Autocompletar desde texto OCR o texto copiado</label>
+        <textarea id="mAutoText" placeholder="Pega aquí el texto de una carta, certificado o informe. Luego pulsa Autocompletar."></textarea>
+      </div>
+      <button type="button" class="btn btn-outline btn-sm" onclick="autofillReasonableFromText()">Autocompletar datos detectables</button>
+      <div class="manual-hint">Detecta correo, teléfono, RUT/ID, nombre, carrera y fragmentos de diagnóstico/ajustes si están rotulados o son reconocibles.</div>
+    </div>
+
+    <div class="grid grid3">
+      <div class="formrow"><label>Estado</label><select id="mStatus"><option value="abierto">abierto</option><option value="seguimiento">seguimiento</option><option value="pausado">pausado</option><option value="cerrado">cerrado</option></select></div>
+      <div class="formrow"><label>Prioridad</label><select id="mPriority"><option value="alta">alta</option><option value="media">media</option><option value="baja">baja</option></select></div>
+      <div class="formrow"><label>Responsable</label><input id="mOwner" value="${esc(r?.owner||'Fabián')}"></div>
+    </div>
+    <div class="formrow"><label>Diagnóstico / antecedente declarado</label><textarea id="mDiagnosis" placeholder="Diagnóstico, condición, antecedente o fuente del requerimiento…">${esc(r?.diagnosis||'')}</textarea></div>
+    <div class="formrow"><label>Ajustes acordados</label><textarea id="mAdjustments" placeholder="Tiempo adicional, formato alternativo, instrucciones accesibles, flexibilización, apoyos, etc.">${esc(r?.adjustments||'')}</textarea></div>
+    <div class="formrow"><label>Observaciones / seguimiento fino</label><textarea id="mObs" placeholder="Registro específico y pulcro de observaciones, acuerdos, avances, dificultades…">${esc(r?.obs||'')}</textarea></div>
+    <div class="formrow"><label>Próxima acción</label><textarea id="mNext">${esc(r?.next||'')}</textarea></div>
+    <div class="grid grid2"><div class="formrow"><label>Fecha próxima acción</label><input id="mDue" type="date" value="${esc(r?.due||isoAdd(2))}"></div><div class="formrow"><label>Etiquetas</label><input id="mTags" value="${esc(r?.tags||'')}" placeholder="discapacidad, salud, evaluación, tutoría…"></div></div>
+    <div class="actions"><button type="button" class="btn btn-outline" data-close-modal>Cancelar</button><button type="button" class="btn btn-primary" data-save-modal>Guardar</button></div>`;
+}
+
+const openModalBeforeV10=openModal;
+openModal=function(type,ctx=''){
+  if(type==='reasonable' || type==='edit:reasonable'){
+    ensureStateShape();
+    editingItem={type:null,id:null};
+    if(type==='edit:reasonable') editingItem={type:'reasonable',id:ctx};
+    modalContext={type:'reasonable',ctx:''};
+    const r=editingItem.id?state.reasonable.find(x=>x.id===editingItem.id):null;
+    const m=$('modal');
+    m.innerHTML=htmlModalReasonable(r);
+    setTimeout(()=>{if(r){$('mStatus').value=r.status||'abierto';$('mPriority').value=r.priority||'media'}},0);
+    $('modalBg').classList.add('on');
+    bindModalButtons();
+    return;
+  }
+  openModalBeforeV10(type,ctx);
+};
+
+saveReasonable=function(){
+ ensureStateShape();
+ const student=val('mStudent');
+ if(!student){toast('Escribe el nombre del estudiante');return}
+ const data={
+   student,
+   studentId:val('mStudentId'),
+   email:val('mEmail'),
+   phone:val('mPhone'),
+   career:val('mCareer'),
+   course:'',
+   status:val('mStatus','abierto'),
+   priority:val('mPriority','media'),
+   owner:val('mOwner','Fabián'),
+   diagnosis:val('mDiagnosis'),
+   adjustments:val('mAdjustments'),
+   obs:val('mObs'),
+   next:val('mNext'),
+   due:val('mDue'),
+   tags:val('mTags'),
+   updatedAt:new Date().toISOString()
+ };
+ if(editingItem.type==='reasonable'&&editingItem.id){
+   Object.assign(state.reasonable.find(x=>x.id===editingItem.id),data);
+   toast('Caso actualizado');
+ } else {
+   state.reasonable.push({id:uid(),tasks:[],docs:[],createdAt:new Date().toISOString(),...data});
+   toast('Caso creado');
+ }
+ save();closeModal();renderAll();
+};
+
+function autofillReasonableFromText(){
+  const text=$('mAutoText')?.value||'';
+  if(!text.trim()){toast('Pega primero el texto del documento');return}
+  const d=extraerDatosCartaAjustes(text);
+  if(d.email && $('mEmail')) $('mEmail').value=d.email;
+  if(d.phone && $('mPhone')) $('mPhone').value=d.phone;
+  if(d.studentId && $('mStudentId')) $('mStudentId').value=d.studentId;
+  if(d.student && d.student!=='Estudiante sin identificar' && $('mStudent')) $('mStudent').value=d.student;
+  if(d.career && $('mCareer')) $('mCareer').value=d.career;
+  if(d.diagnosis && $('mDiagnosis')) $('mDiagnosis').value=d.diagnosis;
+  if(d.adjustments && $('mAdjustments')) $('mAdjustments').value=d.adjustments;
+  if(d.obs && $('mObs')) $('mObs').value=d.obs;
+  if(d.next && $('mNext')) $('mNext').value=d.next;
+  toast('Autocompletado aplicado. Revisa antes de guardar.');
+}
+
+async function ocrImageFile(file, progressBase=0, progressSpan=100){
+  const result=await Tesseract.recognize(file,'spa+eng',{
+    logger:m=>{
+      if(m.status==='recognizing text' && typeof m.progress==='number'){
+        setOCRBar(progressBase + m.progress*progressSpan);
+      }
+    }
+  });
+  return result?.data?.text||'';
+}
+
+async function ocrPdfFile(file, progressBase=0, progressSpan=100){
+  if(!window.pdfjsLib) throw new Error('PDF.js no cargó');
+  pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  const buf=await file.arrayBuffer();
+  const pdf=await pdfjsLib.getDocument({data:buf}).promise;
+  let full='';
+  const maxPages=Math.min(pdf.numPages,6);
+  for(let p=1;p<=maxPages;p++){
+    setOCRLog(`Página ${p}/${pdf.numPages}: leyendo texto embebido…`);
+    const page=await pdf.getPage(p);
+    const textContent=await page.getTextContent().catch(()=>null);
+    const embedded=textContent?.items?.map(i=>i.str).join(' ')||'';
+    if(embedded.trim().length>80){
+      full += '\n' + embedded;
+    }else{
+      setOCRLog(`Página ${p}: sin texto suficiente, aplicando OCR…`);
+      const viewport=page.getViewport({scale:1.7});
+      const canvas=document.createElement('canvas');
+      const ctx=canvas.getContext('2d');
+      canvas.width=viewport.width; canvas.height=viewport.height;
+      await page.render({canvasContext:ctx,viewport}).promise;
+      const blob=await new Promise(res=>canvas.toBlob(res,'image/png'));
+      const pageText=await ocrImageFile(blob, progressBase + ((p-1)/maxPages)*progressSpan, progressSpan/maxPages);
+      full += '\n' + pageText;
+    }
+  }
+  return full;
+}
+
+async function leerCartaOCR(file, index, total){
+  const base=(index/total)*100, span=100/total;
+  setOCRLog(`Procesando ${index+1}/${total}: ${file.name}`);
+  const ext=file.name.toLowerCase();
+  if(ext.endsWith('.pdf')) return await ocrPdfFile(file, base, span);
+  if(/\.(jpg|jpeg|png)$/i.test(ext)) return await ocrImageFile(file, base, span);
+  throw new Error('Formato no soportado para OCR: '+file.name);
+}
+
+async function importarCartasAjustesOCR(){
+  ensureStateShape();
+  const files=[...($('ocrFiles')?.files||[])];
+  if(!files.length){toast('Selecciona una o más cartas primero');return}
+  if(typeof Tesseract==='undefined'){toast('No cargó Tesseract OCR. Revisa internet/conexión.');return}
+  setOCRLog('Iniciando lectura OCR…',false);
+  setOCRBar(0);
+  let creados=0;
+  for(let i=0;i<files.length;i++){
+    try{
+      const file=files[i];
+      const text=await leerCartaOCR(file,i,files.length);
+      const d=extraerDatosCartaAjustes(text);
+      const caso={
+        id:uid(),
+        student:d.student||file.name.replace(/\.[^.]+$/,''),
+        studentId:d.studentId||'',
+        email:d.email||'',
+        phone:d.phone||'',
+        career:d.career||'',
+        course:'',
+        status:'abierto',
+        priority:'alta',
+        owner:'Fabián',
+        diagnosis:d.diagnosis||'',
+        adjustments:d.adjustments||'',
+        obs:d.obs||'Texto OCR importado desde '+file.name+'\\n\\n'+(d.rawText||'').slice(0,1800),
+        next:d.next||'Revisar carta importada y validar ajustes registrados.',
+        due:isoAdd(2),
+        tags:'OCR, carta de ajustes',
+        tasks:[{id:uid(),title:'Validar datos importados por OCR',desc:'Revisar campos extraídos desde '+file.name,owner:'Fabián',due:isoAdd(1),done:false}],
+        docs:[],
+        createdAt:new Date().toISOString(),
+        updatedAt:new Date().toISOString()
+      };
+      state.reasonable.push(caso);
+
+      if(cloudReady&&fbStorage&&fbUser){
+        try{
+          const path=docsPath(file.name);
+          await fbStorage.ref(path).put(file,{contentType:file.type||'application/octet-stream'});
+          const url=await fbStorage.ref(path).getDownloadURL();
+          caso.docs.push({id:uid(),name:'Carta original',type:file.type||'archivo',fileName:file.name,size:file.size,downloadURL:url,storagePath:path,desc:'Archivo original importado por OCR',date:new Date().toISOString()});
+        }catch(e){console.error(e); setOCRLog('No se pudo subir archivo original a Storage: '+file.name);}
+      }else if(file.size<4.5*1024*1024){
+        const dataUrl=await fileToDataURL(file);
+        caso.docs.push({id:uid(),name:'Carta original',type:file.type||'archivo',fileName:file.name,size:file.size,dataUrl,desc:'Archivo original importado por OCR',date:new Date().toISOString()});
+      }
+      creados++;
+      setOCRLog(`✓ Caso creado: ${caso.student}`);
+      save();
+      renderAll();
+    }catch(err){
+      console.error(err);
+      setOCRLog(`✕ Error con ${files[i].name}: ${err.message||err}`);
+    }
+  }
+  setOCRBar(100);
+  toast(`OCR terminado: ${creados} caso(s) creado(s)`);
+}
+
+
+/* === v10: render de tarjetas AR con correo/teléfono y sin curso === */
+renderReasonableCard=function(r){
+ const tasks=r.tasks||[], docs=r.docs||[];
+ const done=tasks.filter(t=>t.done).length;
+ return `<div class="ar-card alerta-${esc(r.priority)}">
+  <div class="ar-head"><div><div class="ar-name">${esc(r.student)}</div><div class="ar-meta">${esc(r.career||'Sin carrera')} · ${esc(r.studentId||'sin ID')}</div><div class="ar-meta">${r.email?'✉️ '+esc(r.email):''}${r.phone?' · ☎️ '+esc(r.phone):''}</div></div>
+  <div class="item-actions"><button class="btn btn-ghost btn-sm" onclick="openModal('edit:reasonable','${r.id}')">✏️</button><button class="btn btn-ghost btn-sm" onclick="deleteReasonable('${r.id}')">✕</button></div></div>
+  <div class="case-meta"><span class="tag ${tagClass(r.priority)}">prioridad ${esc(r.priority)}</span><span class="tag tag-olive">${esc(r.status)}</span><span class="tag tag-gold">${fmt(r.due)}</span><span class="tag tag-rose">${esc(r.owner)}</span></div>
+  <div class="ar-block"><b>Diagnóstico / antecedente:</b><br>${esc(r.diagnosis||'Sin registro.')}</div>
+  <div class="ar-block"><b>Ajustes acordados:</b><br>${esc(r.adjustments||'Sin ajustes registrados.')}</div>
+  <div class="ar-block"><b>Observaciones:</b><br>${esc(r.obs||'Sin observaciones.')}</div>
+  <div class="case-next"><b>Próxima acción</b><span>${esc(r.next||'Sin próxima acción definida.')}</span></div>
+  <div class="ar-block"><b>Tareas de seguimiento (${done}/${tasks.length})</b>
+    <div>${tasks.length?tasks.map(t=>`<div class="ar-task"><div class="ar-check ${t.done?'done':''}" onclick="toggleReasonableTask('${r.id}','${t.id}')"></div><div style="flex:1"><div class="ar-task-title ${t.done?'done':''}">${esc(t.title)}</div><div class="ar-meta">${esc(t.owner||'')} · ${fmt(t.due)}${t.desc?' · '+esc(t.desc):''}</div></div><div class="item-actions"><button class="btn btn-ghost btn-sm" onclick="openModal('edit:arTask','${t.id}');modalContext.ctx='${r.id}'">✏️</button><button class="btn btn-ghost btn-sm" onclick="deleteReasonableTask('${r.id}','${t.id}')">✕</button></div></div>`).join(''):'<div class="ar-meta">Sin tareas todavía.</div>'}</div>
+    <button class="btn btn-outline btn-sm" onclick="openModal('arTask','${r.id}')" style="margin-top:8px">+ tarea</button>
+  </div>
+  <div class="upload-cta">
+    <div class="upload-cta-title">Documentos del caso (${docs.length})</div>
+    <div class="upload-cta-sub">Aquí se guardan diagnósticos, certificados, informes, evidencias, acuerdos y otros respaldos relevantes.</div>
+    <button class="btn btn-primary btn-sm" onclick="openARDoc('${r.id}')">+ Subir archivo</button>
+    <div class="file-list">${docs.length?docs.map(d=>`<div class="file-row">
+      <div style="display:flex;gap:9px;align-items:center">${d.dataUrl&&String(d.mime||'').startsWith('image/')?`<img class="doc-preview" src="${d.dataUrl}">`:''}<div><b>${esc(d.name)}</b><div class="ar-meta">${esc(d.type)} · ${esc(d.fileName||'sin archivo local')}${d.size?' · '+humanFileSize(d.size):''}</div><div class="ar-meta">${esc(d.desc||'')}</div></div></div>
+      <div class="item-actions">${(d.downloadURL||d.dataUrl)?`<a class="btn btn-outline btn-sm" href="${esc(d.downloadURL||d.dataUrl)}" target="_blank" rel="noopener">Descargar</a>`:''}${d.url?`<a class="btn btn-outline btn-sm" href="${esc(normalizeUrl(d.url))}" target="_blank" rel="noopener">Abrir link</a>`:''}<button class="btn btn-ghost btn-sm" onclick="openModal('edit:arDoc','${r.id}|${d.id}')">✏️</button><button class="btn btn-ghost btn-sm" onclick="deleteReasonableDoc('${r.id}','${d.id}')">✕</button></div>
+    </div>`).join(''):'<div class="ar-meta" style="margin-top:8px">Sin documentos asociados todavía.</div>'}</div>
+  </div>
+ </div>`;
+};
 
 bootFirebaseAuth();
 renderAll();

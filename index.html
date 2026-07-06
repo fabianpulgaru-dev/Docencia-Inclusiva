@@ -163,7 +163,7 @@ button{cursor:pointer}
 
 <div class="app">
   <div class="topbar">
-    <div class="brand"><span class="star">✦</span>Mesa de Trabajo <small>gestión académica y proyectos · v12 síntesis cartas UAH</small></div>
+    <div class="brand"><span class="star">✦</span>Mesa de Trabajo <small>gestión académica y proyectos · v13 parser breve AR</small></div>
     <div class="top-actions">
       <input class="search" id="globalSearch" placeholder="Buscar tareas, proyectos, notas…" oninput="renderAll()">
       <div class="sync-pill local" id="syncStatus">Local</div><div class="userchip"><div class="avatar" id="userAvatar">FP</div><span id="userLabel">Fabián · Admin</span></div><button class="btn btn-ghost btn-sm" id="logoutBtn" onclick="logoutFirebase()" style="display:none">Salir</button>
@@ -2207,6 +2207,128 @@ extraerDatosCartaAjustes=function(text){
     d.adjustmentsLong||'Sin ajustes extensos.'
   ].join('\n').trim();
   d.sections=sections;
+  return d;
+};
+
+function resumenBreveCartaUAH(d){
+  return [
+    `Diagnóstico: ${d.diagnosis||'sin detectar'}`,
+    `Ajustes: ${d.adjustments||'sin detectar'}`,
+    d.next ? `Próxima acción: ${d.next}` : ''
+  ].filter(Boolean).join('\n');
+}
+
+
+/* === v13: diagnóstico breve exacto + ajustes desde sección oficial === */
+function compactDiagnosisV13(antecedentes){
+  let t=cleanCarta(antecedentes||'');
+  if(!t) return 'Sin diagnóstico/antecedente registrado.';
+
+  // Corte específico para evitar que entre la explicación operacional posterior.
+  t=t
+    .replace(/\),\s*lo que implica[\s\S]*$/i, ')')
+    .replace(/\.\s*La estudiante desea compartir[\s\S]*$/i, '.')
+    .replace(/\.\s*El\/la estudiante desea compartir[\s\S]*$/i, '.')
+    .replace(/\.\s*La estudiante refiere[\s\S]*$/i, '.')
+    .replace(/\.\s*El estudiante refiere[\s\S]*$/i, '.');
+
+  // Mantener hasta 3 oraciones breves, porque en este formato el antecedente útil suele venir ahí.
+  const parts=sentenceSplit(t).slice(0,3).join(' ');
+  return parts.length>420 ? parts.slice(0,420).trim()+'…' : parts;
+}
+
+function parseSeccionesAjustesUAH_V13(text){
+  const t=normCartaText(text);
+  // Trabajar desde el encabezado de ajustes para no perder secciones.
+  const start=t.search(/Ajustes razonables\s*(?:1[°º]?\s*semestre\s*2026)?/i);
+  const zona=start>=0 ? t.slice(start) : t;
+
+  const headings=[
+    {key:'evaluativas', title:'Adecuaciones en situaciones evaluativas', re:/(?:^|\n|\s)1\.\s*Adecuaciones en situaciones evaluativas|Adecuaciones en situaciones evaluativas/i},
+    {key:'acceso', title:'Adecuación de acceso a la información', re:/(?:^|\n|\s)2\.\s*Adecuaci[oó]n de acceso a la informaci[oó]n|Adecuaci[oó]n de acceso a la informaci[oó]n/i},
+    {key:'participacion', title:'Adecuaciones para la participación', re:/(?:^|\n|\s)3\.\s*Adecuaciones para la participaci[oó]n|Adecuaciones para la participaci[oó]n/i},
+    {key:'infraestructura', title:'Adecuaciones de infraestructura', re:/(?:^|\n|\s)4\.\s*Adecuaciones de infraestructura|Adecuaciones de infraestructura/i}
+  ];
+
+  const found=headings.map(h=>{
+    const m=zona.match(h.re);
+    return m ? {...h, idx:m.index, len:m[0].length} : null;
+  }).filter(Boolean).sort((a,b)=>a.idx-b.idx);
+
+  const sections={};
+  for(let i=0;i<found.length;i++){
+    const cur=found[i], next=found[i+1];
+    let chunk=zona.slice(cur.idx+cur.len, next?next.idx:zona.length);
+    chunk=chunk
+      .replace(/^[:\s.-]+/,'')
+      .replace(/La Unidad de Trayectoria Estudiantil[\s\S]*$/i,'')
+      .trim();
+    sections[cur.key]=cleanCarta(chunk);
+  }
+  return sections;
+}
+
+function compactSectionV13(sectionText){
+  const t=cleanCarta(sectionText||'');
+  if(!t) return '';
+  if(/no requiere/i.test(t)) return 'No requiere.';
+
+  // Sacar una idea ejecutiva por sección.
+  let s=sentenceSplit(t)[0] || t;
+  s=s
+    .replace(/^Se solicita que\s+/i,'')
+    .replace(/^Se solicita\s+/i,'')
+    .replace(/^En lo posible,\s*/i,'')
+    .replace(/^Considerar los siguientes consejos[\s\S]*$/i,'considerar criterios de accesibilidad en presentaciones/textos.')
+    .trim();
+
+  if(s.length>135) s=s.slice(0,135).trim()+'…';
+  return s;
+}
+
+function compactAdjustmentsV13(sections){
+  sections=sections||{};
+  const items=[];
+  if(sections.evaluativas) items.push('Evaluación: '+compactSectionV13(sections.evaluativas));
+  if(sections.acceso) items.push('Acceso/materiales: '+compactSectionV13(sections.acceso));
+  if(sections.participacion) items.push('Participación: '+compactSectionV13(sections.participacion));
+  if(sections.infraestructura) items.push('Infraestructura: '+compactSectionV13(sections.infraestructura));
+
+  return items.length
+    ? items.map((x,i)=>`${i+1}) ${x}`).join(' ')
+    : 'Sin ajustes detectados en la sección “Ajustes razonables”.';
+}
+
+const extraerDatosCartaAjustesV12 = extraerDatosCartaAjustes;
+extraerDatosCartaAjustes=function(text){
+  const d=extraerDatosCartaAjustesV12(text);
+  const raw=d.rawText||normCartaText(text);
+  const sections=parseSeccionesAjustesUAH_V13(raw);
+  const antecedentes=d.diagnosisLong || extractBetween(raw,/Antecedentes entregados por la estudiante/i,[
+    /Ajustes razonables\s+\d|Ajustes razonables/i,
+    /1\.\s*Adecuaciones/i
+  ]);
+
+  const diagnosisFull=cleanCarta(antecedentes || d.diagnosisLong || d.diagnosis || '');
+  const adjustmentsFull=formatAjustesSections(sections);
+
+  d.diagnosisLong=diagnosisFull;
+  d.adjustmentsLong=adjustmentsFull;
+  d.diagnosis=compactDiagnosisV13(diagnosisFull);
+  d.adjustments=compactAdjustmentsV13(sections);
+  d.next=compactNextFromSections(sections);
+  d.sections=sections;
+  d.obs=[
+    d.obs||'',
+    '',
+    'Detalle completo importado:',
+    'ANTECEDENTES COMPLETOS:',
+    diagnosisFull || 'Sin antecedentes extensos.',
+    '',
+    'AJUSTES COMPLETOS:',
+    adjustmentsFull || 'Sin ajustes extensos.'
+  ].join('\n').trim();
+
   return d;
 };
 

@@ -151,7 +151,7 @@ button{cursor:pointer}
 
 <div class="app">
   <div class="topbar">
-    <div class="brand"><span class="star">✦</span>Mesa de Trabajo <small>gestión académica y proyectos · v8 Firebase</small></div>
+    <div class="brand"><span class="star">✦</span>Mesa de Trabajo <small>gestión académica y proyectos · v9 AR contacto + autofill</small></div>
     <div class="top-actions">
       <input class="search" id="globalSearch" placeholder="Buscar tareas, proyectos, notas…" oninput="renderAll()">
       <div class="sync-pill local" id="syncStatus">Local</div><div class="userchip"><div class="avatar" id="userAvatar">FP</div><span id="userLabel">Fabián · Admin</span></div><button class="btn btn-ghost btn-sm" id="logoutBtn" onclick="logoutFirebase()" style="display:none">Salir</button>
@@ -902,7 +902,7 @@ openModal=function(type,ctx=''){
      const r=editingItem.id?state.reasonable.find(x=>x.id===editingItem.id):null;
      m.innerHTML=`<h3>${r?'Editar':'Nuevo'} caso de Ajustes Razonables</h3>
        <div class="grid grid2"><div class="formrow"><label>Estudiante</label><input id="mStudent" value="${esc(r?.student||'')}" placeholder="Nombre completo"></div><div class="formrow"><label>RUT / ID interno</label><input id="mStudentId" value="${esc(r?.studentId||'')}"></div></div>
-       <div class="grid grid2"><div class="formrow"><label>Carrera</label><input id="mCareer" value="${esc(r?.career||'')}"></div><div class="formrow"><label>Curso / asignatura</label><input id="mCourse" value="${esc(r?.course||'')}"></div></div>
+       <div class="formrow"><label>Carrera</label><input id="mCareer" value="${esc(r?.career||'')}"></div>
        <div class="grid grid3"><div class="formrow"><label>Estado</label><select id="mStatus"><option value="abierto">abierto</option><option value="seguimiento">seguimiento</option><option value="pausado">pausado</option><option value="cerrado">cerrado</option></select></div><div class="formrow"><label>Prioridad</label><select id="mPriority"><option value="alta">alta</option><option value="media">media</option><option value="baja">baja</option></select></div><div class="formrow"><label>Responsable</label><input id="mOwner" value="${esc(r?.owner||'Fabián')}"></div></div>
        <div class="formrow"><label>Diagnóstico / antecedente declarado</label><textarea id="mDiagnosis" placeholder="Diagnóstico, condición, antecedente o fuente del requerimiento…">${esc(r?.diagnosis||'')}</textarea></div>
        <div class="formrow"><label>Ajustes acordados</label><textarea id="mAdjustments" placeholder="Tiempo adicional, formato alternativo, instrucciones accesibles, flexibilización, apoyos, etc.">${esc(r?.adjustments||'')}</textarea></div>
@@ -1022,7 +1022,7 @@ saveUser=function(){
 
 function saveReasonable(){
  ensureStateShape(); const student=val('mStudent'); if(!student){toast('Escribe el nombre del estudiante');return}
- const data={student,studentId:val('mStudentId'),career:val('mCareer'),course:val('mCourse'),status:val('mStatus','abierto'),priority:val('mPriority','media'),owner:val('mOwner','Fabián'),diagnosis:val('mDiagnosis'),adjustments:val('mAdjustments'),obs:val('mObs'),next:val('mNext'),due:val('mDue'),tags:val('mTags'),updatedAt:new Date().toISOString()};
+ const data={student,studentId:val('mStudentId'),email:val('mEmail'),phone:val('mPhone'),career:val('mCareer'),course:'',status:val('mStatus','abierto'),priority:val('mPriority','media'),owner:val('mOwner','Fabián'),diagnosis:val('mDiagnosis'),adjustments:val('mAdjustments'),obs:val('mObs'),next:val('mNext'),due:val('mDue'),tags:val('mTags'),updatedAt:new Date().toISOString()};
  if(editingItem.type==='reasonable'&&editingItem.id){Object.assign(state.reasonable.find(x=>x.id===editingItem.id),data);toast('Caso actualizado')}
  else state.reasonable.push({id:uid(),tasks:[],docs:[],createdAt:new Date().toISOString(),...data});
  save();closeModal();renderAll();
@@ -1067,7 +1067,7 @@ function renderReasonableCard(r){
  const tasks=r.tasks||[], docs=r.docs||[];
  const done=tasks.filter(t=>t.done).length;
  return `<div class="ar-card alerta-${esc(r.priority)}">
-  <div class="ar-head"><div><div class="ar-name">${esc(r.student)}</div><div class="ar-meta">${esc(r.career||'Sin carrera')} · ${esc(r.course||'Sin curso')} · ${esc(r.studentId||'sin ID')}</div></div>
+  <div class="ar-head"><div><div class="ar-name">${esc(r.student)}</div><div class="ar-meta">${esc(r.career||'Sin carrera')} · ${esc(r.studentId||'sin ID')}</div><div class="ar-meta">${r.email?'✉️ '+esc(r.email):''} ${r.phone?' · ☎️ '+esc(r.phone):''}</div></div>
   <div class="item-actions"><button class="btn btn-ghost btn-sm" onclick="openModal('edit:reasonable','${r.id}')">✏️</button><button class="btn btn-ghost btn-sm" onclick="deleteReasonable('${r.id}')">✕</button></div></div>
   <div class="case-meta"><span class="tag ${tagClass(r.priority)}">prioridad ${esc(r.priority)}</span><span class="tag tag-olive">${esc(r.status)}</span><span class="tag tag-gold">${fmt(r.due)}</span><span class="tag tag-rose">${esc(r.owner)}</span></div>
   <div class="ar-block"><b>Diagnóstico / antecedente:</b><br>${esc(r.diagnosis||'Sin registro.')}</div>
@@ -1318,7 +1318,7 @@ renderReasonableCard=function(r){
  const tasks=r.tasks||[], docs=r.docs||[];
  const done=tasks.filter(t=>t.done).length;
  return `<div class="ar-card alerta-${esc(r.priority)}">
-  <div class="ar-head"><div><div class="ar-name">${esc(r.student)}</div><div class="ar-meta">${esc(r.career||'Sin carrera')} · ${esc(r.course||'Sin curso')} · ${esc(r.studentId||'sin ID')}</div></div>
+  <div class="ar-head"><div><div class="ar-name">${esc(r.student)}</div><div class="ar-meta">${esc(r.career||'Sin carrera')} · ${esc(r.studentId||'sin ID')}</div><div class="ar-meta">${r.email?'✉️ '+esc(r.email):''} ${r.phone?' · ☎️ '+esc(r.phone):''}</div></div>
   <div class="item-actions"><button class="btn btn-ghost btn-sm" onclick="openModal('edit:reasonable','${r.id}')">✏️</button><button class="btn btn-ghost btn-sm" onclick="deleteReasonable('${r.id}')">✕</button></div></div>
   <div class="case-meta"><span class="tag ${tagClass(r.priority)}">prioridad ${esc(r.priority)}</span><span class="tag tag-olive">${esc(r.status)}</span><span class="tag tag-gold">${fmt(r.due)}</span><span class="tag tag-rose">${esc(r.owner)}</span></div>
   <div class="ar-block"><b>Diagnóstico / antecedente:</b><br>${esc(r.diagnosis||'Sin registro.')}</div>
@@ -1434,7 +1434,7 @@ renderReasonableCard=function(r){
  const tasks=r.tasks||[], docs=r.docs||[];
  const done=tasks.filter(t=>t.done).length;
  return `<div class="ar-card alerta-${esc(r.priority)}">
-  <div class="ar-head"><div><div class="ar-name">${esc(r.student)}</div><div class="ar-meta">${esc(r.career||'Sin carrera')} · ${esc(r.course||'Sin curso')} · ${esc(r.studentId||'sin ID')}</div></div>
+  <div class="ar-head"><div><div class="ar-name">${esc(r.student)}</div><div class="ar-meta">${esc(r.career||'Sin carrera')} · ${esc(r.studentId||'sin ID')}</div><div class="ar-meta">${r.email?'✉️ '+esc(r.email):''} ${r.phone?' · ☎️ '+esc(r.phone):''}</div></div>
   <div class="item-actions"><button class="btn btn-ghost btn-sm" onclick="openModal('edit:reasonable','${r.id}')">✏️</button><button class="btn btn-ghost btn-sm" onclick="deleteReasonable('${r.id}')">✕</button></div></div>
   <div class="case-meta"><span class="tag ${tagClass(r.priority)}">prioridad ${esc(r.priority)}</span><span class="tag tag-olive">${esc(r.status)}</span><span class="tag tag-gold">${fmt(r.due)}</span><span class="tag tag-rose">${esc(r.owner)}</span></div>
   <div class="ar-block"><b>Diagnóstico / antecedente:</b><br>${esc(r.diagnosis||'Sin registro.')}</div>
@@ -1500,6 +1500,36 @@ saveReasonableDoc=async function(caseId){
  else r.docs.push({id:uid(),...data});
  save();closeModal();renderAll();
 };
+
+
+/* === v9: autocompletar Ajustes Razonables desde texto pegado === */
+function cleanDetected(s){ return String(s||'').replace(/\s+/g,' ').trim(); }
+function detectAfterLabel(text, labels){
+  const lines=String(text||'').split(/\n|;/).map(x=>x.trim()).filter(Boolean);
+  for(const line of lines){
+    for(const lab of labels){
+      const re=new RegExp('^\\s*'+lab+'\\s*[:\\-]\\s*(.+)$','i');
+      const m=line.match(re);
+      if(m) return cleanDetected(m[1]);
+    }
+  }
+  return '';
+}
+function autofillReasonableFromText(){
+  const text=$('mAutoText')?.value||'';
+  if(!text.trim()){toast('Pega primero el texto del documento');return}
+  const email=(text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)||[])[0]||'';
+  const phone=(text.match(/(\+?56\s*)?(\(?9\)?\s*)?[\d\s.-]{8,14}/)||[])[0]||'';
+  const rut=(text.match(/\b\d{1,2}\.?\d{3}\.?\d{3}-[\dkK]\b/)||[])[0]||'';
+  const student=detectAfterLabel(text,['nombre','estudiante','alumno','alumna','nombre completo']);
+  const career=detectAfterLabel(text,['carrera','programa','plan de estudios']);
+  if(email && $('mEmail')) $('mEmail').value=email;
+  if(phone && $('mPhone')) $('mPhone').value=cleanDetected(phone);
+  if(rut && $('mStudentId')) $('mStudentId').value=rut;
+  if(student && $('mStudent')) $('mStudent').value=student;
+  if(career && $('mCareer')) $('mCareer').value=career;
+  toast('Autocompletado aplicado. Revisa los datos antes de guardar.');
+}
 
 bootFirebaseAuth();
 renderAll();

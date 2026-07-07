@@ -189,6 +189,13 @@ button{cursor:pointer}
 .case-doc-row a{color:var(--blue);text-decoration:none;font-weight:700}
 @media(max-width:900px){.case-row{grid-template-columns:1fr}.case-row .item-actions{justify-content:flex-start}}
 
+
+/* === v17 orden de filtros por módulo === */
+.module-controls{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:12px 0}
+.module-controls-left,.module-controls-right{display:flex;gap:7px;align-items:center;flex-wrap:wrap}
+.module-view-label{font-size:11px;border-radius:999px;background:#eef6f8;color:var(--blue);padding:6px 10px;font-weight:700}
+.case-toolbar,.ar-toolbar{margin-top:6px;margin-bottom:6px}
+
 </style>
 </head>
 <body>
@@ -210,7 +217,7 @@ button{cursor:pointer}
 
 <div class="app">
   <div class="topbar">
-    <div class="brand"><span class="star">✦</span>Mesa de Trabajo <small>gestión académica y proyectos · v16 casos masivos docs</small></div>
+    <div class="brand"><span class="star">✦</span>Mesa de Trabajo <small>gestión académica y proyectos · v17 filtros casos corregidos</small></div>
     <div class="top-actions">
       <input class="search" id="globalSearch" placeholder="Buscar tareas, proyectos, notas…" oninput="renderAll()">
       <div class="sync-pill local" id="syncStatus">Local</div><div class="userchip"><div class="avatar" id="userAvatar">FP</div><span id="userLabel">Fabián · Admin</span></div><button class="btn btn-ghost btn-sm" id="logoutBtn" onclick="logoutFirebase()" style="display:none">Salir</button>
@@ -2668,6 +2675,77 @@ openCaseDetail=function(id){
  modal.innerHTML=`<div class="case-detail-head"><div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start"><div><h3>${esc(c.name)}</h3><p>${esc(c.type)} · ${esc(c.program||'Sin programa')} · Responsable: ${esc(c.owner||'')}</p><div class="case-meta" style="margin-top:10px"><span class="tag ${tagClass(c.alert)}">alerta ${esc(c.alert)}</span><span class="tag tag-olive">${esc(c.status)}</span><span class="tag tag-gold">${fmt(c.due)}</span></div></div><div class="item-actions"><button class="btn btn-outline btn-sm" style="border-color:rgba(255,255,255,.35);color:white" onclick="openModal('edit:case','${c.id}')">✏️ Editar ficha</button><button class="btn btn-outline btn-sm" style="border-color:rgba(255,255,255,.35);color:white" onclick="closeModal()">Cerrar</button></div></div></div>
  <div class="case-detail-grid"><div class="case-detail-card"><h4>Resumen del caso</h4><p style="font-size:13px;line-height:1.7;color:var(--ink2)">${esc(c.desc||'Sin descripción registrada.')}</p><div class="case-history" style="margin-top:12px"><b>Historial:</b><br>${esc(c.history||'Sin historial registrado.')}</div></div><div class="case-detail-card"><h4>Estado operativo</h4><div class="grid grid3"><div class="stat"><div class="n">${relatedTasks.length}</div><div class="l">tareas</div></div><div class="stat"><div class="n">${pending.length}</div><div class="l">pendientes</div></div><div class="stat"><div class="n">${done.length}</div><div class="l">cumplidas</div></div></div><div style="margin-top:10px" class="item-actions"><button class="btn btn-primary btn-sm" onclick="openModal('caseTask','${c.id}')">+ Tarea</button><button class="btn btn-outline btn-sm" onclick="openCaseDoc('${c.id}')">+ Documento</button><button class="btn btn-outline btn-sm" onclick="closeCase('${c.id}');openCaseDetail('${c.id}')">${c.status==='cerrado'?'Reabrir':'Cerrar caso'}</button></div></div><div class="case-detail-card"><h4>Tareas del caso</h4>${relatedTasks.length?relatedTasks.map(t=>`<div class="case-task-row ${t.status==='terminada'?'done-soft':''}"><div class="case-task-check ${t.status==='terminada'?'done':''}" onclick="toggleTask('${t.id}');openCaseDetail('${c.id}')"></div><div style="flex:1"><div class="task-title ${t.status==='terminada'?'done':''}">${esc(t.title)}</div><div class="task-desc">${esc(t.desc||'')}${renderLinksFromText((t.desc||'')+' '+(t.links||''))}</div><div class="task-meta"><span class="tag ${tagClass(t.priority)}">${esc(t.priority)}</span><span class="tag tag-olive">${esc(t.status)}</span><span class="tag tag-gold">${fmt(t.due)}</span><span class="tag tag-rose">${esc(t.owner)}</span></div></div><div class="item-actions"><button class="btn btn-ghost btn-sm" onclick="openModal('edit:task','${t.id}')">✏️</button><button class="btn btn-ghost btn-sm" onclick="deleteTask('${t.id}');openCaseDetail('${c.id}')">✕</button></div></div>`).join(''):'<div class="empty"><p>No hay tareas vinculadas todavía.</p></div>'}</div><div class="case-detail-card"><h4>Documentos</h4>${renderCaseDocsBlock(c.id)}</div></div>`;
  $('modalBg').classList.add('on');
+};
+
+
+/* === v17: controles de Casos específicos igual que Ajustes Razonables y limpieza visual === */
+function ensureCaseControls(){
+  const sec=$('sec-casos');
+  if(!sec)return;
+
+  // Evitar duplicados antiguos.
+  sec.querySelectorAll('.case-toolbar,.case-abc-filter').forEach(n=>n.remove());
+
+  const tabs=sec.querySelector('.tabs');
+  const wrap=document.createElement('div');
+  wrap.className='case-toolbar module-controls';
+  wrap.innerHTML=`
+    <div class="module-controls-left">
+      <span class="module-view-label" id="caseViewMode">Vista: ${caseView==='list'?'lista':caseView==='compact'?'compacta':'cuadrícula'}</span>
+    </div>
+    <div class="module-controls-right">
+      <button class="case-view-btn ${caseView==='grid'?'active':''}" id="caseViewGrid" onclick="setCaseView('grid')">Cuadrícula</button>
+      <button class="case-view-btn ${caseView==='list'?'active':''}" id="caseViewList" onclick="setCaseView('list')">Lista</button>
+      <button class="case-view-btn ${caseView==='compact'?'active':''}" id="caseViewCompact" onclick="setCaseView('compact')">Compacta</button>
+    </div>`;
+  const abc=document.createElement('div');
+  abc.className='case-abc-filter';
+  abc.id='caseAbcFilter';
+
+  if(tabs){
+    tabs.before(wrap);
+    tabs.before(abc);
+  }else{
+    sec.appendChild(wrap);
+    sec.appendChild(abc);
+  }
+}
+
+function ensureARControlsClean(){
+  const sec=$('sec-razonables');
+  if(!sec)return;
+
+  // En AR puede haber dos bloques de vista por cruces de versiones. Dejamos solo el primero útil.
+  const toolbars=[...sec.querySelectorAll('.ar-toolbar')];
+  toolbars.slice(1).forEach(n=>n.remove());
+  const abcs=[...sec.querySelectorAll('.abc-filter')];
+  abcs.slice(1).forEach(n=>n.remove());
+
+  // El importador debe quedar plegado y no empujar el resumen.
+  const ocr=$('ocrPanel');
+  if(ocr && !ocr.classList.contains('collapsed')) ocr.classList.add('collapsed');
+}
+
+const renderAllBeforeV17 = renderAll;
+renderAll=function(){
+  ensureCaseControls();
+  ensureARControlsClean();
+  renderAllBeforeV17();
+  ensureCaseControls();
+  ensureARControlsClean();
+  renderCaseAbcFilter();
+  updateCaseViewButtons();
+  renderARAbcFilter(state.reasonable||[]);
+  updateARViewButtons();
+};
+
+// Reforzar renderCases para que siempre pinte ABC y modos, aunque el HTML inicial no los trajera.
+const renderCasesBeforeV17 = renderCases;
+renderCases=function(){
+  ensureCaseControls();
+  renderCasesBeforeV17();
+  renderCaseAbcFilter();
+  updateCaseViewButtons();
 };
 
 bootFirebaseAuth();
